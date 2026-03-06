@@ -496,21 +496,19 @@
             gap: 10px;
         }
 
-        /* Request Item Card */
+        /* Request Item List */
         .request-item {
             background: white;
             border-radius: 16px;
-            padding: 24px;
             margin-bottom: 16px;
             border: 2px solid var(--gray-200);
             transition: all 0.3s;
-            cursor: pointer;
+            overflow: hidden;
         }
 
         .request-item:hover {
             border-color: var(--primary-red);
             box-shadow: 0 4px 20px rgba(220, 38, 38, 0.1);
-            transform: translateY(-2px);
         }
 
         .request-item.logbook-item {
@@ -522,23 +520,102 @@
             box-shadow: 0 4px 20px rgba(37, 99, 235, 0.1);
         }
 
-        .request-header {
+        .request-summary {
+            list-style: none;
+            padding: 16px 18px;
+            cursor: pointer;
+        }
+
+        .request-summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .request-summary::marker {
+            content: '';
+        }
+
+        .summary-top {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid var(--gray-200);
+            align-items: flex-start;
+            gap: 10px;
         }
 
         .request-title {
             font-weight: 700;
             color: var(--gray-900);
-            font-size: 17px;
+            font-size: 16px;
             display: flex;
             align-items: center;
             gap: 8px;
             flex-wrap: wrap;
+        }
+
+        .summary-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .details-pill {
+            padding: 7px 12px;
+            border-radius: 10px;
+            border: 2px solid var(--gray-300);
+            color: var(--gray-700);
+            background: white;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            font-size: 12px;
+            font-weight: 700;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(17, 24, 39, 0.05);
+        }
+
+        .details-pill i {
+            transition: transform 0.25s ease;
+        }
+
+        .request-item[open] .details-pill {
+            border-color: var(--primary-red);
+            color: var(--primary-red);
+            background: var(--light-red);
+        }
+
+        .request-item[open] .details-pill i {
+            transform: rotate(180deg);
+        }
+
+        .summary-bottom {
+            margin-top: 14px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 18px 24px;
+        }
+
+        .summary-meta {
+            min-width: 190px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .summary-meta-label {
+            font-weight: 600;
+            font-size: 12px;
+            color: var(--gray-600);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .summary-meta-value {
+            color: var(--gray-900);
+            font-weight: 600;
+            font-size: 14px;
         }
 
         .entry-type-badge {
@@ -596,10 +673,20 @@
             border: 1px solid rgba(239, 68, 68, 0.3);
         }
 
+        .request-expand {
+            border-top: 1px solid var(--gray-200);
+            padding: 24px 18px 16px;
+            background: linear-gradient(180deg, white 0%, #fcfcfc 100%);
+        }
+
+        .request-item:not([open]) .request-expand {
+            display: none;
+        }
+
         .request-details {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
+            gap: 22px;
         }
 
         .detail-item {
@@ -1133,6 +1220,25 @@
 
             .request-details {
                 grid-template-columns: 1fr;
+            }
+
+            .summary-top {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .summary-right {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .summary-bottom {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .summary-meta {
+                min-width: 100%;
             }
         }
 

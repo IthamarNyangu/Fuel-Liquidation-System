@@ -480,7 +480,7 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fuel Liquidation Dashboard</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-     <link rel="stylesheet" type="text/css" href="dashboard.css">
+    <link rel="stylesheet" type="text/css" href="dashboard.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/dashboard.css')); ?>">
     <style>
         
     </style>
@@ -730,36 +730,47 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                     foreach ($entriesToShow as $entry): 
                         $isLogbook = ($entry['entry_type'] === 'logbook');
                 ?>
-                    <div class="request-item <?php echo $isLogbook ? 'logbook-item' : ''; ?>" 
-                         onclick='<?php echo $isLogbook ? "openLogbookModal" : "openModal"; ?>(<?php echo json_encode($entry); ?><?php echo !$isLogbook ? ", " . ($can_approve ? "true" : "false") : ""; ?>)'>
-                        <div class="request-header">
-                            <div class="request-title">
-                                <i class="fas fa-<?php echo $isLogbook ? 'book' : 'gas-pump'; ?>"></i>
-                                <?php echo htmlspecialchars($entry['vehicle_name'] . ' (' . $entry['number_plate'] . ')'); ?>
-                                <?php if ($viewMode === 'all'): ?>
-                                <span class="entry-type-badge <?php echo $isLogbook ? 'logbook' : 'requisition'; ?>">
+                    <details class="request-item <?php echo $isLogbook ? 'logbook-item' : ''; ?>">
+                        <summary class="request-summary">
+                            <div class="summary-top">
+                                <div class="request-title">
                                     <i class="fas fa-<?php echo $isLogbook ? 'book' : 'gas-pump'; ?>"></i>
-                                    <?php echo $isLogbook ? 'Logbook' : 'Requisition'; ?>
-                                </span>
-                                <?php endif; ?>
+                                    <?php echo htmlspecialchars($entry['vehicle_name'] . ' (' . $entry['number_plate'] . ')'); ?>
+                                    <?php if ($viewMode === 'all'): ?>
+                                    <span class="entry-type-badge <?php echo $isLogbook ? 'logbook' : 'requisition'; ?>">
+                                        <i class="fas fa-<?php echo $isLogbook ? 'book' : 'gas-pump'; ?>"></i>
+                                        <?php echo $isLogbook ? 'Logbook' : 'Requisition'; ?>
+                                    </span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="summary-right">
+                                    <?php if (!$isLogbook): ?>
+                                    <span class="status-badge status-<?php echo $entry['status']; ?>">
+                                        <i class="fas fa-<?php echo $entry['status'] === 'approved' ? 'check-circle' : ($entry['status'] === 'rejected' ? 'times-circle' : 'clock'); ?>"></i>
+                                        <?php echo ucfirst($entry['status']); ?>
+                                    </span>
+                                    <?php endif; ?>
+                                    <span class="details-pill" aria-hidden="true">
+                                        Details <i class="fas fa-chevron-down"></i>
+                                    </span>
+                                </div>
                             </div>
-                            <?php if (!$isLogbook): ?>
-                            <span class="status-badge status-<?php echo $entry['status']; ?>">
-                                <i class="fas fa-<?php echo $entry['status'] === 'approved' ? 'check-circle' : ($entry['status'] === 'rejected' ? 'times-circle' : 'clock'); ?>"></i>
-                                <?php echo ucfirst($entry['status']); ?>
-                            </span>
-                            <?php endif; ?>
-                        </div>
-                        <div class="request-details">
+                            <div class="summary-bottom">
+                                <div class="summary-meta">
+                                    <span class="summary-meta-label">
+                                        <i class="fas fa-user"></i> <?php echo $isLogbook ? 'Driver' : 'Requested By'; ?>
+                                    </span>
+                                    <span class="summary-meta-value"><?php echo htmlspecialchars($isLogbook ? ($entry['driver_name'] ?? 'Unknown') : ($entry['staff_name'] ?? 'Unknown')); ?></span>
+                                </div>
+                                <div class="summary-meta">
+                                    <span class="summary-meta-label"><i class="fas fa-calendar"></i> Date</span>
+                                    <span class="summary-meta-value"><?php echo date('d M Y', strtotime($isLogbook ? $entry['log_date'] : $entry['request_date'])); ?></span>
+                                </div>
+                            </div>
+                        </summary>
+                        <div class="request-expand">
+                            <div class="request-details">
                             <?php if ($isLogbook): ?>
-                                <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-user"></i> Driver</span>
-                                    <span class="detail-value"><?php echo htmlspecialchars($entry['driver_name'] ?? 'Unknown'); ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-calendar"></i> Date</span>
-                                    <span class="detail-value"><?php echo date('d M Y', strtotime($entry['log_date'])); ?></span>
-                                </div>
                                 <div class="detail-item">
                                     <span class="detail-label"><i class="fas fa-map-marker-alt"></i> From</span>
                                     <span class="detail-value"><?php echo htmlspecialchars($entry['location_from'] ?? '-'); ?></span>
@@ -786,14 +797,6 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                                 </div>
                             <?php else: ?>
                                 <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-user"></i> Requested By</span>
-                                    <span class="detail-value"><?php echo htmlspecialchars($entry['staff_name'] ?? 'Unknown'); ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-calendar"></i> Date</span>
-                                    <span class="detail-value"><?php echo date('d M Y', strtotime($entry['request_date'])); ?></span>
-                                </div>
-                                <div class="detail-item">
                                     <span class="detail-label"><i class="fas fa-droplet"></i> Amount</span>
                                     <span class="detail-value highlight"><?php echo number_format($entry['requested_amount'], 2); ?> L</span>
                                 </div>
@@ -818,8 +821,9 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                                     <span class="detail-value"><?php echo htmlspecialchars($entry['approver_name'] ?? '-'); ?></span>
                                 </div>
                             <?php endif; ?>
+                            </div>
                         </div>
-                    </div>
+                    </details>
                 <?php endforeach; ?>
                 <?php else: ?>
                     <div class="empty-state">
