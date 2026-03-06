@@ -1,0 +1,5 @@
+UPDATE users 
+SET is_super_admin = 1, 
+    role = 'super_admin', 
+    facility_id = NULL 
+WHERE id = 1;

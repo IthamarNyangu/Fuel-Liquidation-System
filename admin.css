@@ -1,0 +1,237 @@
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500&display=swap");
+
+:root {
+  --primary: #b30000;
+  --secondary: #990000;
+  --success: #4cc9f0;
+  --info: #4895ef;
+  --warning: #f72585;
+  --light: #f8f9fa;
+  --dark: #212529;
+}
+
+body {
+  background-color: #f2f2f2;
+  font-family: "Montserrat", sans-serif;
+}
+
+.sidebar {
+  background: linear-gradient(180deg, var(--primary), var(--secondary));
+  min-height: 100vh;
+  position: fixed;
+  z-index: 100;
+  padding: 0;
+}
+
+.sidebar .nav-link {
+  color: rgba(255, 255, 255, 0.8);
+  padding: 12px 20px;
+  margin: 4px 0;
+  border-radius: 8px;
+  transition: all 0.3s;
+}
+
+.sidebar .nav-link:hover,
+.sidebar .nav-link.active {
+  background-color: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+
+.sidebar .nav-link i {
+  margin-right: 10px;
+  width: 24px;
+  text-align: center;
+}
+
+.main-content {
+  margin-left: 250px;
+  padding: 20px;
+}
+
+.card {
+  border-radius: 16px;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+  border: none;
+  margin-bottom: 24px;
+  transition: transform 0.3s;
+  background: #ffffff;
+}
+
+.card:hover {
+  transform: translateY(-5px);
+}
+
+.card-header {
+  background: transparent;
+  border: none;
+  padding-bottom: 0;
+}
+
+.stat-card {
+  background: white;
+  border-left: 4px solid var(--primary);
+}
+
+.stat-icon {
+  width: 60px;
+  height: 60px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin-bottom: 16px;
+  background-color: rgba(179, 0, 0, 0.15);
+  color: var(--primary);
+}
+
+.chart-container {
+  position: relative;
+  height: 300px;
+  width: 100%;
+}
+
+.map-container {
+  height: 300px;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.recent-sales tr:hover {
+  background-color: rgba(179, 0, 0, 0.05);
+}
+
+.btn-export {
+  padding: 8px 16px;
+  font-size: 14px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  transition: background 0.3s ease;
+}
+
+.btn-export:hover {
+  background: var(--secondary);
+}
+
+.login-modal .modal-content {
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.login-modal .modal-header {
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  color: white;
+  border: none;
+  padding: 24px;
+}
+
+.login-modal .form-control {
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid #ccc;
+  background: #ffffff;
+  font-size: 1rem;
+}
+
+.login-modal .btn-login {
+  background: var(--primary);
+  border: none;
+  padding: 12px;
+  border-radius: 12px;
+  font-weight: 600;
+  color: white;
+  transition: background 0.3s ease;
+}
+
+.login-modal .btn-login:hover {
+  background: var(--secondary);
+}
+
+.calendar {
+  background: white;
+  border-radius: 16px;
+  padding: 20px;
+  height: 100%;
+}
+
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+}
+
+.calendar-day {
+  text-align: center;
+  padding: 10px 0;
+  font-weight: 600;
+  color: #6c757d;
+}
+
+.calendar-date {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.calendar-date:hover {
+  background-color: #e0e0e0;
+}
+
+.calendar-date.today {
+  background-color: var(--primary);
+  color: white;
+}
+
+.user-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--primary);
+}
+
+@media (max-width: 992px) {
+  .sidebar {
+    width: 80px;
+  }
+  .sidebar .nav-link span {
+    display: none;
+  }
+  .sidebar .nav-link i {
+    margin-right: 0;
+    font-size: 20px;
+  }
+  .main-content {
+    margin-left: 80px;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    width: 100%;
+    position: relative;
+    min-height: auto;
+  }
+  .main-content {
+    margin-left: 0;
+  }
+  .stat-card {
+    margin-bottom: 16px;
+  }
+}
