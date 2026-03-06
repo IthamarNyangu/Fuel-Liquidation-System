@@ -651,6 +651,23 @@ switch ($reportType) {
             width: 50%;
         }
 
+        .filters-stats-layout {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
+            align-items: stretch;
+            margin-bottom: 25px;
+        }
+
+        .filters-stats-layout .filters-card {
+            width: 100%;
+            margin-bottom: 0;
+        }
+
+        .filters-stats-layout > .stats-grid {
+            margin-bottom: 0;
+        }
+
         .filters-title {
             color: var(--gray-900);
             font-size: 18px;
@@ -714,12 +731,14 @@ switch ($reportType) {
         }
 
         .filter-actions {
-            display: flex;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 10px;
+            width: calc((100% - 15px) / 2);
         }
 
         .btn-filter {
-            padding: 10px 24px;
+            padding: 8px 10px;
             background: linear-gradient(135deg, var(--primary-red), #ef4444);
             color: white;
             border: none;
@@ -729,7 +748,8 @@ switch ($reportType) {
             transition: all 0.3s;
             display: flex;
             align-items: center;
-            gap: 8px;
+            justify-content: center;
+            font-size: 13px;
         }
 
         .btn-filter:hover {
@@ -738,7 +758,7 @@ switch ($reportType) {
         }
 
         .btn-clear {
-            padding: 10px 24px;
+            padding: 8px 10px;
             background: white;
             color: var(--gray-700);
             border: 2px solid var(--gray-300);
@@ -746,6 +766,7 @@ switch ($reportType) {
             font-weight: 700;
             cursor: pointer;
             transition: all 0.3s;
+            font-size: 13px;
         }
 
         .btn-clear:hover {
@@ -758,6 +779,56 @@ switch ($reportType) {
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 20px;
             margin-bottom: 25px;
+        }
+
+        /* Compact, equal-size inline summary cards (2x2) */
+        .stats-grid.stats-grid-compact {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            height: 100%;
+        }
+
+        /* Vehicle activity summary cards (3x2) */
+        .stats-grid.stats-grid-activity {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            height: 100%;
+        }
+
+        .stats-grid.stats-grid-compact .stat-card,
+        .stats-grid.stats-grid-activity .stat-card {
+            padding: 12px;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .stats-grid.stats-grid-compact .stat-icon,
+        .stats-grid.stats-grid-activity .stat-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+
+        .stats-grid.stats-grid-compact .stat-icon i,
+        .stats-grid.stats-grid-activity .stat-icon i {
+            font-size: 16px;
+        }
+
+        .stats-grid.stats-grid-compact .stat-label,
+        .stats-grid.stats-grid-activity .stat-label {
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+
+        .stats-grid.stats-grid-compact .stat-value,
+        .stats-grid.stats-grid-activity .stat-value {
+            font-size: 20px;
+            line-height: 1.2;
         }
 
         .stat-card {
@@ -1056,6 +1127,10 @@ switch ($reportType) {
                 max-width: 100%;
             }
 
+            .filters-stats-layout {
+                grid-template-columns: 1fr;
+            }
+
             .filter-group.date-filter {
                 max-width: 100%;
             }
@@ -1064,8 +1139,22 @@ switch ($reportType) {
                 width: 100%;
             }
 
+            .stats-grid.stats-grid-compact {
+                grid-template-columns: 1fr;
+                grid-template-rows: none;
+                height: auto;
+            }
+
+            .stats-grid.stats-grid-activity {
+                grid-template-columns: 1fr;
+                grid-template-rows: none;
+                height: auto;
+            }
+
             .filter-actions {
+                display: flex;
                 flex-direction: column;
+                width: 100%;
             }
 
             .btn-filter,
@@ -1151,6 +1240,20 @@ switch ($reportType) {
                 </a>
             </div>
         </div>
+
+        <?php
+        $inlineStatsTypes = ['price_history', 'float_adjustments', 'vehicle_activity', 'vehicle_consumption', 'user_consumption'];
+        $showInlineStats = in_array($reportType, $inlineStatsTypes, true) && !empty($reportStats);
+        $statsGridClass = '';
+        if (in_array($reportType, ['price_history', 'float_adjustments', 'vehicle_consumption', 'user_consumption'], true)) {
+            $statsGridClass = 'stats-grid-compact';
+        } elseif ($reportType === 'vehicle_activity') {
+            $statsGridClass = 'stats-grid-activity';
+        }
+        ?>
+        <?php if ($showInlineStats): ?>
+        <div class="filters-stats-layout">
+        <?php endif; ?>
 
         <!-- Filters -->
         <div class="filters-card">
@@ -1252,7 +1355,7 @@ switch ($reportType) {
 
         <!-- Stats Cards -->
         <?php if (!empty($reportStats)): ?>
-        <div class="stats-grid">
+        <div class="stats-grid <?php echo $statsGridClass; ?>">
             <?php 
             switch ($reportType) {
                 case 'price_history':
@@ -1369,6 +1472,9 @@ switch ($reportType) {
                     break;
             }
             ?>
+        </div>
+        <?php endif; ?>
+        <?php if ($showInlineStats): ?>
         </div>
         <?php endif; ?>
 
