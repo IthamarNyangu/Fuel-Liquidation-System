@@ -105,6 +105,8 @@ $sortBy = $_GET['sort'] ?? '';
 $sortOrder = $_GET['order'] ?? 'DESC';
 $selectedAccount = $_GET['account'] ?? 'All';
 $viewMode = $_GET['view'] ?? 'all'; // all, requisitions, logbook
+$itemsPerPage = 5;
+$currentPage = max(1, (int)($_GET['page'] ?? 1));
 
 // Fetch available years
 $yearsQuery = "SELECT DISTINCT YEAR(r.request_date) as year 
@@ -358,8 +360,6 @@ if ($viewMode === 'all' || $viewMode === 'requisitions') {
         $query .= " ORDER BY r.created_at DESC";
     }
 
-    $query .= " LIMIT 50";
-
     $stmt = $pdo->prepare($query);
     foreach ($params as $key => $value) {
         $stmt->bindValue($key, $value);
@@ -438,8 +438,6 @@ if ($viewMode === 'all' || $viewMode === 'logbook') {
         $logbookQuery .= " ORDER BY l.created_at DESC";
     }
 
-    $logbookQuery .= " LIMIT 50";
-
     $logbookStmt = $pdo->prepare($logbookQuery);
     foreach ($logbook_params as $key => $value) {
         $logbookStmt->bindValue($key, $value);
@@ -455,8 +453,26 @@ if ($viewMode === 'all') {
     usort($allEntries, function($a, $b) {
         return strtotime($b['created_at']) - strtotime($a['created_at']);
     });
-    $allEntries = array_slice($allEntries, 0, 50);
 }
+
+// Pagination for all list views
+$entriesSource = $viewMode === 'all'
+    ? $allEntries
+    : ($viewMode === 'requisitions' ? $requisitions : $logbookEntries);
+
+$totalEntries = count($entriesSource);
+$totalPages = max(1, (int)ceil($totalEntries / $itemsPerPage));
+if ($currentPage > $totalPages) {
+    $currentPage = $totalPages;
+}
+$offset = ($currentPage - 1) * $itemsPerPage;
+$entriesToShow = array_slice($entriesSource, $offset, $itemsPerPage);
+
+$buildPageUrl = function($page) {
+    $params = $_GET;
+    $params['page'] = $page;
+    return 'dashboard.php?' . http_build_query($params);
+};
 
 // Get facility name for display
 if ($is_super_admin) {
@@ -723,11 +739,8 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                     </div>
                 </div>
 
-                <?php 
-                $entriesToShow = $viewMode === 'all' ? $allEntries : ($viewMode === 'requisitions' ? $requisitions : $logbookEntries);
-                
-                if (count($entriesToShow) > 0): 
-                    foreach ($entriesToShow as $entry): 
+                <?php if (count($entriesToShow) > 0): ?>
+                <?php foreach ($entriesToShow as $entry): 
                         $isLogbook = ($entry['entry_type'] === 'logbook');
                 ?>
                     <details class="request-item <?php echo $isLogbook ? 'logbook-item' : ''; ?>">
@@ -838,6 +851,31 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                         ?></p>
                     </div>
                 <?php endif; ?>
+
+                <?php if ($totalPages > 1): ?>
+                    <div class="pagination">
+                        <?php if ($currentPage > 1): ?>
+                            <a class="page-link page-nav" href="<?php echo htmlspecialchars($buildPageUrl($currentPage - 1)); ?>">
+                                <i class="fas fa-chevron-left"></i> Previous
+                            </a>
+                        <?php endif; ?>
+
+                        <div class="page-numbers">
+                            <?php for ($page = 1; $page <= $totalPages; $page++): ?>
+                                <a class="page-link page-number <?php echo $page === $currentPage ? 'active' : ''; ?>"
+                                   href="<?php echo htmlspecialchars($buildPageUrl($page)); ?>">
+                                    <?php echo $page; ?>
+                                </a>
+                            <?php endfor; ?>
+                        </div>
+
+                        <?php if ($currentPage < $totalPages): ?>
+                            <a class="page-link page-nav" href="<?php echo htmlspecialchars($buildPageUrl($currentPage + 1)); ?>">
+                                Next <i class="fas fa-chevron-right"></i>
+                            </a>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
             </div>
         </main>
     </div>
@@ -891,12 +929,14 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
         function changeAccount(account) {
             const url = new URL(window.location.href);
             url.searchParams.set('account', account);
+            url.searchParams.set('page', '1');
             window.location.href = url.toString();
         }
 
         function changeView(view) {
             const url = new URL(window.location.href);
             url.searchParams.set('view', view);
+            url.searchParams.set('page', '1');
             // Reset sort when changing views
             if (view === 'logbook') {
                 url.searchParams.delete('sort');
@@ -944,6 +984,7 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
         function toggleCardFilter(status) {
             const currentStatus = '<?php echo $filterStatus; ?>';
             const url = new URL(window.location.href);
+            url.searchParams.set('page', '1');
             
             if (currentStatus === status) {
                 url.searchParams.delete('status');
@@ -959,6 +1000,7 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                 const url = new URL(window.location.href);
                 url.searchParams.delete('sort');
                 url.searchParams.delete('order');
+                url.searchParams.set('page', '1');
                 window.location.href = url.toString();
                 return;
             }
@@ -967,6 +1009,7 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
             const url = new URL(window.location.href);
             url.searchParams.set('sort', sortBy);
             url.searchParams.set('order', order.toUpperCase());
+            url.searchParams.set('page', '1');
             window.location.href = url.toString();
         }
 
