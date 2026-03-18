@@ -15,6 +15,8 @@ $user_role = isset($_SESSION['user_role']) ? $_SESSION['user_role'] : 'staff';
 $user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'User';
 $user_email = isset($_SESSION['user_email']) ? $_SESSION['user_email'] : '';
 $can_approve = in_array($user_role, ['super_admin', 'admin']);
+$can_review_weekly = $can_approve || $user_role === 'facility_admin' || !empty($_SESSION['is_facility_admin']);
+$can_use_driver_workflow = in_array($user_role, ['staff', 'admin', 'approver', 'super_admin'], true);
 
 // Check if non-super-admin user has a facility assigned
 if (!$is_super_admin && !$user_facility_id) {
@@ -513,6 +515,13 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                 <li><a href="dashboard.php" class="active"><span class="menu-icon"><i class="fas fa-home"></i></span><span class="menu-text">Dashboard</span></a></li>
                 <li><a href="reports.php"><span class="menu-icon"><i class="fas fa-chart-line"></i></span><span class="menu-text">Reports</span></a></li>
                 <li><a href="weekly_report.php"><span class="menu-icon"><i class="fas fa-file-alt"></i></span><span class="menu-text">Weekly Report</span></a></li>
+                <?php if ($can_use_driver_workflow): ?>
+                <li><a href="my_vehicle.php"><span class="menu-icon"><i class="fas fa-car-side"></i></span><span class="menu-text">My Vehicle</span></a></li>
+                <li><a href="weekly_liquidation.php"><span class="menu-icon"><i class="fas fa-clipboard-check"></i></span><span class="menu-text">Weekly Liquidation</span></a></li>
+                <?php endif; ?>
+                <?php if ($can_review_weekly): ?>
+                <li><a href="facility_liquidation_review.php"><span class="menu-icon"><i class="fas fa-user-check"></i></span><span class="menu-text">Weekly Review</span></a></li>
+                <?php endif; ?>
                 <li><a href="logbook.php"><span class="menu-icon"><i class="fas fa-book"></i></span><span class="menu-text">Log Book</span></a></li>
                 <li><a href="request.php"><span class="menu-icon"><i class="fas fa-gas-pump"></i></span><span class="menu-text">Request Fuel</span></a></li>
                 <?php if ($can_approve): ?>
@@ -621,10 +630,9 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
             </div>
 
             <!-- Entries List -->
-            <div class="requests-container">
+            <div class="requests-container" id="entries-section">
                 <div class="card-header">
                     <h2 class="card-title">
-                        <i class="fas fa-list-alt"></i>
                         <?php 
                         if ($viewMode === 'requisitions') {
                             echo 'Recent Requisitions';
@@ -942,6 +950,7 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                 url.searchParams.delete('sort');
                 url.searchParams.delete('order');
             }
+            url.hash = 'entries-section';
             window.location.href = url.toString();
         }
 
