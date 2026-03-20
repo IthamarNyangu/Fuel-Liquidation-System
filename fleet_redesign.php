@@ -378,13 +378,80 @@ function fleet_get_latest_vehicle_odometer(PDO $pdo, int $vehicleId): float
     return (float) ($stmt->fetchColumn() ?: 0);
 }
 
+function fleet_fetch_confirmable_users(PDO $pdo, ?int $facilityId = null): array
+{
+    if ($facilityId) {
+        $stmt = $pdo->prepare("
+            SELECT id, name, email, role
+            FROM users
+            WHERE facility_id = ?
+            ORDER BY name
+        ");
+        $stmt->execute([$facilityId]);
+        return $stmt->fetchAll();
+    }
+
+    $stmt = $pdo->query("
+        SELECT id, name, email, role
+        FROM users
+        ORDER BY name
+    ");
+
+    return $stmt->fetchAll();
+}
+
+function fleet_fetch_confirmation_users(PDO $pdo, ?int $facilityId = null): array
+{
+    if ($facilityId) {
+        $stmt = $pdo->prepare("
+            SELECT DISTINCT id, name, email, role
+            FROM users
+            WHERE role IN ('admin', 'super_admin')
+               OR (facility_id = ? AND role = 'facility_admin')
+            ORDER BY name
+        ");
+        $stmt->execute([$facilityId]);
+
+        return $stmt->fetchAll();
+    }
+
+    $stmt = $pdo->query("
+        SELECT id, name, email, role
+        FROM users
+        WHERE role IN ('facility_admin', 'admin', 'super_admin')
+        ORDER BY name
+    ");
+
+    return $stmt->fetchAll();
+}
+
+function fleet_find_in_progress_trip_leg(PDO $pdo, int $vehicleId): ?array
+{
+    $stmt = $pdo->prepare("
+        SELECT
+            tl.*,
+            u.name AS driver_name
+        FROM trip_legs tl
+        LEFT JOIN users u
+            ON u.id = tl.driver_id
+        WHERE tl.vehicle_id = ?
+          AND tl.record_status = 'in_progress'
+        ORDER BY tl.movement_date DESC, tl.time_out DESC, tl.id DESC
+        LIMIT 1
+    ");
+    $stmt->execute([$vehicleId]);
+
+    return $stmt->fetch() ?: null;
+}
+
 function fleet_recalculate_weekly(PDO $pdo, int $weeklyId): array
 {
     $tripStmt = $pdo->prepare("
         SELECT
             COUNT(*) AS total_trip_legs,
             COALESCE(SUM(tl.total_km), 0) AS total_km,
-            COALESCE(SUM(CASE WHEN tl.has_issues = 1 THEN 1 ELSE 0 END), 0) AS trip_issue_count
+            COALESCE(SUM(CASE WHEN tl.has_issues = 1 THEN 1 ELSE 0 END), 0) AS trip_issue_count,
+            COALESCE(SUM(CASE WHEN tl.record_status = 'in_progress' THEN 1 ELSE 0 END), 0) AS in_progress_trip_count
         FROM weekly_liquidation_items wli
         JOIN trip_legs tl
             ON tl.id = wli.trip_leg_id
@@ -397,6 +464,7 @@ function fleet_recalculate_weekly(PDO $pdo, int $weeklyId): array
         'total_trip_legs' => 0,
         'total_km' => 0,
         'trip_issue_count' => 0,
+        'in_progress_trip_count' => 0,
     ];
 
     $fuelStmt = $pdo->prepare("
@@ -437,8 +505,11 @@ function fleet_recalculate_weekly(PDO $pdo, int $weeklyId): array
     $missingReceipts = (int) ($receiptStmt->fetchColumn() ?: 0);
 
     $issueNotes = [];
-    $issueCount = (int) $trip['trip_issue_count'] + (int) $fuel['fuel_issue_count'] + $missingReceipts;
+    $issueCount = (int) $trip['trip_issue_count'] + (int) $trip['in_progress_trip_count'] + (int) $fuel['fuel_issue_count'] + $missingReceipts;
 
+    if ((int) $trip['in_progress_trip_count'] > 0) {
+        $issueNotes[] = $trip['in_progress_trip_count'] . ' movement leg(s) still in progress';
+    }
     if ((int) $trip['trip_issue_count'] > 0) {
         $issueNotes[] = $trip['trip_issue_count'] . ' movement leg(s) need attention';
     }
@@ -477,6 +548,7 @@ function fleet_recalculate_weekly(PDO $pdo, int $weeklyId): array
     $weekly['total_fuel_purchases'] = (int) $fuel['total_fuel_purchases'];
     $weekly['missing_receipts'] = $missingReceipts;
     $weekly['trip_issue_count'] = (int) $trip['trip_issue_count'];
+    $weekly['in_progress_trip_count'] = (int) $trip['in_progress_trip_count'];
     $weekly['fuel_issue_count'] = (int) $fuel['fuel_issue_count'];
 
     return $weekly;
@@ -496,7 +568,11 @@ function fleet_fetch_weekly_trip_legs(PDO $pdo, int $weeklyId): array
             ON v.id = tl.vehicle_id
         WHERE wli.weekly_liquidation_id = ?
           AND wli.item_type = 'trip_leg'
-        ORDER BY tl.movement_date DESC, tl.time_out DESC, tl.id DESC
+        ORDER BY
+            CASE WHEN tl.record_status = 'in_progress' THEN 0 ELSE 1 END,
+            tl.movement_date DESC,
+            tl.time_out DESC,
+            tl.id DESC
     ");
     $stmt->execute([$weeklyId]);
 

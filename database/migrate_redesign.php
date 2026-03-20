@@ -172,17 +172,19 @@ try {
             movement_date DATE NOT NULL,
             week_start_date DATE NOT NULL,
             time_out TIME NOT NULL,
-            time_in TIME NOT NULL,
+            time_in TIME NULL,
             from_location VARCHAR(255) NOT NULL,
             to_location VARCHAR(255) NOT NULL,
             purpose VARCHAR(255) NOT NULL,
             odometer_start_km DECIMAL(10,2) NOT NULL,
-            odometer_end_km DECIMAL(10,2) NOT NULL,
-            total_km DECIMAL(10,2) NOT NULL,
+            odometer_end_km DECIMAL(10,2) NULL,
+            total_km DECIMAL(10,2) NULL,
+            confirmed_by_user_id INT NULL,
             confirmed_by_name VARCHAR(150) NULL,
             confirmed_by_title VARCHAR(150) NULL,
             confirmed_by_contact VARCHAR(100) NULL,
-            record_status ENUM('draft', 'recorded', 'locked', 'voided') NOT NULL DEFAULT 'draft',
+            passenger_name VARCHAR(150) NULL,
+            record_status ENUM('draft', 'recorded', 'in_progress', 'completed', 'locked', 'voided') NOT NULL DEFAULT 'draft',
             has_issues TINYINT(1) NOT NULL DEFAULT 0,
             issue_notes TEXT NULL,
             void_reason TEXT NULL,
@@ -215,6 +217,41 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+    addColumnIfMissing($pdo, 'trip_legs', 'confirmed_by_user_id', "INT NULL AFTER total_km");
+    addColumnIfMissing($pdo, 'trip_legs', 'arrival_date', "DATE NULL AFTER time_in");
+    addColumnIfMissing($pdo, 'trip_legs', 'passenger_name', "VARCHAR(150) NULL AFTER confirmed_by_contact");
+    $pdo->exec("
+        ALTER TABLE trip_legs
+        MODIFY time_in TIME NULL,
+        MODIFY odometer_end_km DECIMAL(10,2) NULL,
+        MODIFY total_km DECIMAL(10,2) NULL,
+        MODIFY record_status ENUM('draft', 'recorded', 'in_progress', 'completed', 'locked', 'voided') NOT NULL DEFAULT 'draft'
+    ");
+    line('Adjusted trip_legs columns for two-step completion');
+
+    $pdo->exec("
+        UPDATE trip_legs
+        SET record_status = 'completed'
+        WHERE record_status IN ('draft', 'recorded')
+    ");
+    line('Normalized legacy trip leg statuses');
+
+    $copiedArrivalDates = $pdo->exec("
+        UPDATE trip_legs
+        SET arrival_date = movement_date
+        WHERE arrival_date IS NULL
+          AND time_in IS NOT NULL
+    ");
+    line('Backfilled arrival_date for ' . $copiedArrivalDates . ' trip leg row(s)');
+
+    $copiedPassengerNames = $pdo->exec("
+        UPDATE trip_legs
+        SET passenger_name = confirmed_by_name
+        WHERE passenger_name IS NULL
+          AND confirmed_by_name IS NOT NULL
+          AND confirmed_by_name <> ''
+    ");
+    line('Backfilled passenger_name for ' . $copiedPassengerNames . ' trip leg row(s)');
     createTable($pdo, 'fuel_purchases', "
         CREATE TABLE IF NOT EXISTS fuel_purchases (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -422,6 +459,12 @@ try {
     line('Migration failed: ' . $e->getMessage());
     exit(1);
 }
+
+
+
+
+
+
 
 
 

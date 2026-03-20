@@ -110,17 +110,20 @@ CREATE TABLE IF NOT EXISTS trip_legs (
     movement_date DATE NOT NULL,
     week_start_date DATE NOT NULL,
     time_out TIME NOT NULL,
-    time_in TIME NOT NULL,
+    time_in TIME NULL,
+    arrival_date DATE NULL,
     from_location VARCHAR(255) NOT NULL,
     to_location VARCHAR(255) NOT NULL,
     purpose VARCHAR(255) NOT NULL,
     odometer_start_km DECIMAL(10,2) NOT NULL,
-    odometer_end_km DECIMAL(10,2) NOT NULL,
-    total_km DECIMAL(10,2) NOT NULL,
+    odometer_end_km DECIMAL(10,2) NULL,
+    total_km DECIMAL(10,2) NULL,
+    confirmed_by_user_id INT NULL,
     confirmed_by_name VARCHAR(150) NULL,
     confirmed_by_title VARCHAR(150) NULL,
     confirmed_by_contact VARCHAR(100) NULL,
-    record_status ENUM('draft', 'recorded', 'locked', 'voided') NOT NULL DEFAULT 'draft',
+    passenger_name VARCHAR(150) NULL,
+    record_status ENUM('draft', 'recorded', 'in_progress', 'completed', 'locked', 'voided') NOT NULL DEFAULT 'draft',
     has_issues TINYINT(1) NOT NULL DEFAULT 0,
     issue_notes TEXT NULL,
     void_reason TEXT NULL,
@@ -167,7 +170,7 @@ CREATE TABLE IF NOT EXISTS fuel_purchases (
     unit_price DECIMAL(10,2) NULL,
     amount DECIMAL(12,2) NOT NULL,
     notes TEXT NULL,
-    record_status ENUM('draft', 'recorded', 'locked', 'voided') NOT NULL DEFAULT 'draft',
+    record_status ENUM('draft', 'recorded', 'in_progress', 'completed', 'locked', 'voided') NOT NULL DEFAULT 'draft',
     has_issues TINYINT(1) NOT NULL DEFAULT 0,
     issue_notes TEXT NULL,
     void_reason TEXT NULL,
@@ -338,3 +341,6 @@ CREATE TABLE IF NOT EXISTS attachments (
         FOREIGN KEY (uploaded_by) REFERENCES users(id)
         ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+

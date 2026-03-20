@@ -304,13 +304,24 @@ if (!$recentTrips) {
 } else {
     echo '<div class="activity-list">';
     foreach ($recentTrips as $trip) {
+        $tripStatusLabel = ucwords(str_replace('_', ' ', (string) $trip['record_status']));
+        $tripTimeLabel = date('D, d M Y', strtotime($trip['movement_date'])) . ' &middot; ' . fleet_h(substr((string) $trip['time_out'], 0, 5));
+        if ($trip['record_status'] === 'in_progress' || empty($trip['time_in'])) {
+            $tripTimeLabel .= ' onward';
+        } else {
+            $tripTimeLabel .= ' to ' . fleet_h(substr((string) $trip['time_in'], 0, 5));
+        }
+        $tripTimeLabel .= ' &middot; ' . fleet_h($trip['purpose']);
+        $tripValue = ($trip['record_status'] === 'in_progress' || $trip['total_km'] === null)
+            ? 'In progress'
+            : number_format((float) $trip['total_km'], 1) . ' km';
         echo '<div class="activity-row">';
         echo '<div class="activity-main">';
         echo '<p class="activity-title">' . fleet_h($trip['from_location']) . ' to ' . fleet_h($trip['to_location']) . '</p>';
-        echo '<p class="activity-meta">' . date('D, d M Y', strtotime($trip['movement_date'])) . ' &middot; ' . fleet_h(substr((string) $trip['time_out'], 0, 5)) . ' to ' . fleet_h(substr((string) $trip['time_in'], 0, 5)) . ' &middot; ' . fleet_h($trip['purpose']) . '</p>';
+        echo '<p class="activity-meta">' . $tripTimeLabel . '</p>';
         echo '</div>';
-        echo '<div class="activity-value">' . number_format((float) $trip['total_km'], 1) . ' km</div>';
-        echo '<span class="status-pill ' . fleet_h($trip['record_status']) . '">' . fleet_h($trip['record_status']) . '</span>';
+        echo '<div class="activity-value">' . fleet_h($tripValue) . '</div>';
+        echo '<span class="status-pill ' . fleet_h($trip['record_status']) . '">' . fleet_h($tripStatusLabel) . '</span>';
         echo '</div>';
     }
     echo '</div>';

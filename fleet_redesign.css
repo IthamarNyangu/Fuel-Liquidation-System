@@ -494,6 +494,10 @@ a {
     grid-column: span 4;
 }
 
+.form-group.span-8 {
+    grid-column: span 8;
+}
+
 .form-group.span-3 {
     grid-column: span 3;
 }
@@ -602,6 +606,7 @@ a {
 }
 
 .status-pill.recorded,
+.status-pill.completed,
 .status-pill.returned {
     background: var(--fleet-blue-100);
     color: var(--fleet-blue-700);
@@ -610,6 +615,16 @@ a {
 .status-pill.recorded {
     background: var(--fleet-primary-100);
     color: var(--fleet-primary-700);
+}
+
+.status-pill.completed {
+    background: var(--fleet-green-100);
+    color: var(--fleet-green-700);
+}
+
+.status-pill.in_progress {
+    background: var(--fleet-amber-100);
+    color: var(--fleet-amber-700);
 }
 
 .status-pill.returned {
@@ -924,6 +939,53 @@ a {
     line-height: 1.45;
 }
 
+.pagination {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--fleet-slate-200);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.page-numbers {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.page-link {
+    text-decoration: none;
+    border: 1px solid var(--fleet-slate-300);
+    background: #fff;
+    color: var(--fleet-slate-700);
+    border-radius: 10px;
+    min-width: 38px;
+    height: 38px;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.page-link:hover {
+    border-color: var(--fleet-primary-500);
+    color: var(--fleet-primary-700);
+    background: var(--fleet-primary-100);
+}
+
+.page-link.active {
+    border-color: var(--fleet-primary-600);
+    background: linear-gradient(180deg, var(--fleet-primary-600), var(--fleet-primary-700));
+    color: #fff;
+}
+
 @media (max-width: 1140px) {
     .vehicle-summary,
     .review-layout,
@@ -981,9 +1043,15 @@ a {
     .week-inline-actions {
         flex-wrap: wrap;
     }
+
+    .pagination {
+        flex-direction: column;
+        align-items: stretch;
+    }
 }
 
 @media (max-width: 720px) {
+    .form-group.span-8,
     .form-group.span-6,
     .form-group.span-4,
     .form-group.span-3 {

@@ -198,6 +198,9 @@ if (!$tripLegs) {
 } else {
     echo '<div class="data-list">';
     foreach ($tripLegs as $trip) {
+        $passengerName = trim((string) ($trip['passenger_name'] ?? ''));
+        $passengerDisplay = $passengerName !== '' ? $passengerName : trim((string) ($trip['confirmed_by_name'] ?? ''));
+        $confirmerDisplay = $passengerName !== '' ? trim((string) ($trip['confirmed_by_name'] ?? '')) : '';
         echo '<article class="data-item">';
         echo '<div class="data-item-header">';
         echo '<div><h3 class="data-item-title">' . fleet_h($trip['from_location']) . ' to ' . fleet_h($trip['to_location']) . '</h3><p class="data-item-meta">' . date('D, d M Y', strtotime($trip['movement_date'])) . ' · ' . fleet_h(substr((string) $trip['time_out'], 0, 5)) . ' to ' . fleet_h(substr((string) $trip['time_in'], 0, 5)) . ' · Confirmed by ' . fleet_h($trip['confirmed_by_name']) . '</p></div>';
@@ -208,6 +211,8 @@ if (!$tripLegs) {
         echo '<div class="detail-pair"><span class="detail-pair-label">Start km</span><span class="detail-pair-value">' . number_format((float) $trip['odometer_start_km'], 1) . '</span></div>';
         echo '<div class="detail-pair"><span class="detail-pair-label">End km</span><span class="detail-pair-value">' . number_format((float) $trip['odometer_end_km'], 1) . '</span></div>';
         echo '<div class="detail-pair"><span class="detail-pair-label">Total km</span><span class="detail-pair-value">' . number_format((float) $trip['total_km'], 1) . '</span></div>';
+        echo '<div class="detail-pair"><span class="detail-pair-label">Passenger / Requester</span><span class="detail-pair-value">' . fleet_h($passengerDisplay ?: 'Not captured') . '</span></div>';
+        echo '<div class="detail-pair"><span class="detail-pair-label">Confirmed By</span><span class="detail-pair-value">' . fleet_h($confirmerDisplay ?: 'Not captured') . '</span></div>';
         echo '</div>';
         if (!empty($trip['issue_notes'])) {
             echo '<p class="helper-text issue-hint"><i class="fas fa-triangle-exclamation"></i> ' . fleet_h($trip['issue_notes']) . '</p>';

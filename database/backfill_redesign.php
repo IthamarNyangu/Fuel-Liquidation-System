@@ -82,6 +82,7 @@ try {
             week_start_date,
             time_out,
             time_in,
+            arrival_date,
             from_location,
             to_location,
             purpose,
@@ -89,6 +90,7 @@ try {
             odometer_end_km,
             total_km,
             confirmed_by_name,
+            passenger_name,
             record_status,
             has_issues,
             issue_notes,
@@ -107,6 +109,7 @@ try {
             DATE_SUB(l.log_date, INTERVAL (DAYOFWEEK(l.log_date) - 1) DAY),
             l.time_out,
             l.time_in,
+            l.log_date,
             l.location_from,
             l.location_to,
             l.purpose,
@@ -114,7 +117,8 @@ try {
             l.end_kms,
             l.total_kms,
             NULL,
-            'recorded',
+            NULL,
+            'completed',
             1,
             'Imported from legacy logbook. Confirmed-by person was not stored in the old system.',
             'logbook',
@@ -177,7 +181,7 @@ try {
             r.fuel_price_per_liter,
             (r.requested_amount * r.fuel_price_per_liter),
             r.notes,
-            'recorded',
+            'completed',
             CASE
                 WHEN r.receipt_data IS NULL AND (r.receipt_filename IS NULL OR r.receipt_filename = '') THEN 1
                 ELSE 0
@@ -260,3 +264,6 @@ try {
     line('Backfill failed: ' . $e->getMessage());
     exit(1);
 }
+
+
+
