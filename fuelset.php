@@ -69,7 +69,7 @@ $priceHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fuel Price Settings</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-     <link rel="stylesheet" type="text/css" href="fuelset.css">
+     <link rel="stylesheet" type="text/css" href="fuelset.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/fuelset.css')); ?>">
     <style>
         
     </style>

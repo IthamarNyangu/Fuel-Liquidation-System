@@ -118,24 +118,24 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
         }
 
         :root {
-            --primary-red: #dc2626;
-            --dark-red: #991b1b;
-            --light-red: #fef2f2;
-            --gray-50: #f9fafb;
-            --gray-100: #f3f4f6;
-            --gray-200: #e5e7eb;
-            --gray-300: #d1d5db;
-            --gray-400: #9ca3af;
-            --gray-500: #6b7280;
-            --gray-600: #4b5563;
-            --gray-700: #374151;
-            --gray-800: #1f2937;
-            --gray-900: #111827;
+            --primary-red: #35627c;
+            --dark-red: #29485d;
+            --light-red: #e9f1f5;
+            --gray-50: #f3f6f8;
+            --gray-100: #eef3f6;
+            --gray-200: #dde4ea;
+            --gray-300: #cad3dc;
+            --gray-400: #8b98a6;
+            --gray-500: #6a7786;
+            --gray-600: #43515f;
+            --gray-700: #26323d;
+            --gray-800: #1f3443;
+            --gray-900: #16202a;
         }
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #f5f5f5 0%, #e5e7eb 50%, #fee2e2 100%);
+            background: radial-gradient(circle at top right, rgba(76, 127, 153, 0.12), transparent 24%), linear-gradient(145deg, #f7f7f5 0%, #f6f8fa 46%, #eef3f6 100%);
             background-attachment: fixed;
             min-height: 100vh;
         }
@@ -148,7 +148,7 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
         /* Sidebar */
         .sidebar {
             width: 280px;
-            background: rgba(220, 38, 38, 0.95);
+            background: linear-gradient(180deg, rgba(31, 52, 67, 0.98) 0%, rgba(41, 72, 93, 0.98) 56%, rgba(53, 98, 124, 0.96) 100%);
             backdrop-filter: blur(20px);
             position: fixed;
             height: 100vh;
@@ -163,7 +163,7 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
 
         .sidebar-header {
             padding: 25px 20px;
-            background: rgba(153, 27, 27, 0.9);
+            background: rgba(31, 52, 67, 0.94);
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
             display: flex;
             align-items: center;
@@ -362,10 +362,10 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
         .stat-card {
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(220, 38, 38, 0.18);
+            border: 1px solid rgba(53, 98, 124, 0.16);
             border-radius: 20px;
             padding: 24px;
-            box-shadow: 0 8px 32px rgba(220, 38, 38, 0.1);
+            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
             position: relative;
             overflow: hidden;
             transition: all 0.3s;
@@ -378,12 +378,12 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
             left: 0;
             width: 100%;
             height: 4px;
-            background: linear-gradient(90deg, var(--primary-red), #ef4444);
+            background: linear-gradient(90deg, var(--dark-red), var(--primary-red));
         }
 
         .stat-card:hover {
             transform: translateY(-5px);
-            box-shadow: 0 12px 40px rgba(220, 38, 38, 0.2);
+            box-shadow: 0 18px 36px rgba(22, 32, 42, 0.12);
         }
 
         .stat-icon {
@@ -422,10 +422,10 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
         .requests-card {
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(220, 38, 38, 0.18);
+            border: 1px solid rgba(53, 98, 124, 0.16);
             border-radius: 20px;
             padding: 30px;
-            box-shadow: 0 8px 32px rgba(220, 38, 38, 0.1);
+            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
             position: relative;
             overflow: hidden;
         }
@@ -437,7 +437,7 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
             left: 0;
             width: 100%;
             height: 4px;
-            background: linear-gradient(90deg, var(--primary-red), #ef4444);
+            background: linear-gradient(90deg, var(--dark-red), var(--primary-red));
         }
 
         .card-header {
@@ -468,7 +468,7 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
 
         .request-item:hover {
             border-color: var(--primary-red);
-            box-shadow: 0 4px 20px rgba(220, 38, 38, 0.1);
+            box-shadow: 0 12px 24px rgba(22, 32, 42, 0.08);
             transform: translateY(-2px);
         }
 
@@ -640,7 +640,7 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
 
         .btn-new-request {
             padding: 12px 28px;
-            background: linear-gradient(135deg, var(--primary-red), #ef4444);
+            background: linear-gradient(135deg, var(--dark-red), var(--primary-red));
             color: white;
             border: none;
             border-radius: 12px;
@@ -655,7 +655,7 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
 
         .btn-new-request:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(220, 38, 38, 0.4);
+            box-shadow: 0 12px 26px rgba(53, 98, 124, 0.22);
         }
 
         /* Mobile Responsive */
@@ -691,7 +691,7 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
                 right: 20px;
                 width: 56px;
                 height: 56px;
-                background: linear-gradient(135deg, var(--primary-red), #ef4444);
+                background: linear-gradient(135deg, var(--dark-red), var(--primary-red));
                 border-radius: 50%;
                 border: none;
                 color: white;

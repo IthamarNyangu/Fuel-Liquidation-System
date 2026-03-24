@@ -271,7 +271,7 @@ $assignedVehicleCount = count($assignedVehicles);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fuel Request - <?php echo htmlspecialchars($logged_in_user_name); ?></title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-     <link rel="stylesheet" type="text/css" href="request.css">
+     <link rel="stylesheet" type="text/css" href="request.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/request.css')); ?>">
     <style>
         
     </style>

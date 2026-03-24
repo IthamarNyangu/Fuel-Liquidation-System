@@ -323,7 +323,7 @@ switch ($reportType) {
                 NULL as filling_station,
                 NULL as status,
                 l.purpose,
-                CONCAT(l.location_from, ' → ', l.location_to) as route,
+                CONCAT(l.location_from, ' Ã¢â€ â€™ ', l.location_to) as route,
                 l.total_kms as distance,
                 a.name as approver_name
             FROM logbook l
@@ -497,24 +497,24 @@ switch ($reportType) {
         }
 
         :root {
-            --primary-red: #dc2626;
-            --dark-red: #991b1b;
-            --light-red: #fef2f2;
-            --gray-50: #f9fafb;
-            --gray-100: #f3f4f6;
-            --gray-200: #e5e7eb;
-            --gray-300: #d1d5db;
-            --gray-400: #9ca3af;
-            --gray-500: #6b7280;
-            --gray-600: #4b5563;
-            --gray-700: #374151;
-            --gray-800: #1f2937;
-            --gray-900: #111827;
+            --primary-red: #35627c;
+            --dark-red: #29485d;
+            --light-red: #e9f1f5;
+            --gray-50: #f3f6f8;
+            --gray-100: #eef3f6;
+            --gray-200: #dde4ea;
+            --gray-300: #cad3dc;
+            --gray-400: #8b98a6;
+            --gray-500: #6a7786;
+            --gray-600: #43515f;
+            --gray-700: #26323d;
+            --gray-800: #1f3443;
+            --gray-900: #16202a;
         }
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #f5f5f5 0%, #e5e7eb 50%, #fee2e2 100%);
+            background: radial-gradient(circle at top right, rgba(76, 127, 153, 0.12), transparent 24%), linear-gradient(145deg, #f7f7f5 0%, #f6f8fa 46%, #eef3f6 100%);
             background-attachment: fixed;
             min-height: 100vh;
             padding: 20px;
@@ -529,11 +529,11 @@ switch ($reportType) {
         .header {
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(220, 38, 38, 0.18);
+            border: 1px solid rgba(53, 98, 124, 0.16);
             padding: 25px 30px;
             border-radius: 20px;
             margin-bottom: 25px;
-            box-shadow: 0 8px 32px rgba(220, 38, 38, 0.1);
+            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
         }
 
         .header-content {
@@ -590,11 +590,11 @@ switch ($reportType) {
         .report-tabs {
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(220, 38, 38, 0.18);
+            border: 1px solid rgba(53, 98, 124, 0.16);
             padding: 20px;
             border-radius: 20px;
             margin-bottom: 25px;
-            box-shadow: 0 8px 32px rgba(220, 38, 38, 0.1);
+            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
         }
 
         .tabs-grid {
@@ -627,10 +627,10 @@ switch ($reportType) {
         }
 
         .tab-btn.active {
-            background: linear-gradient(135deg, var(--primary-red), #ef4444);
+            background: linear-gradient(135deg, var(--dark-red), var(--primary-red));
             color: white;
             border-color: var(--primary-red);
-            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+            box-shadow: 0 10px 22px rgba(53, 98, 124, 0.18);
         }
 
         .tab-btn.disabled {
@@ -643,11 +643,11 @@ switch ($reportType) {
         .filters-card {
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(220, 38, 38, 0.18);
+            border: 1px solid rgba(53, 98, 124, 0.16);
             padding: 25px;
             border-radius: 20px;
             margin-bottom: 25px;
-            box-shadow: 0 8px 32px rgba(220, 38, 38, 0.1);
+            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
             width: 50%;
         }
 
@@ -718,7 +718,7 @@ switch ($reportType) {
         .filter-group select:focus {
             outline: none;
             border-color: var(--primary-red);
-            box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+            box-shadow: 0 0 0 3px rgba(53, 98, 124, 0.12);
         }
 
         /* Keep date inputs compact on desktop so the picker icon is closer to the value */
@@ -739,7 +739,7 @@ switch ($reportType) {
 
         .btn-filter {
             padding: 8px 10px;
-            background: linear-gradient(135deg, var(--primary-red), #ef4444);
+            background: linear-gradient(135deg, var(--dark-red), var(--primary-red));
             color: white;
             border: none;
             border-radius: 10px;
@@ -754,7 +754,7 @@ switch ($reportType) {
 
         .btn-filter:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4);
+            box-shadow: 0 12px 24px rgba(53, 98, 124, 0.24);
         }
 
         .btn-clear {
@@ -834,10 +834,10 @@ switch ($reportType) {
         .stat-card {
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(220, 38, 38, 0.18);
+            border: 1px solid rgba(53, 98, 124, 0.16);
             padding: 20px;
             border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(220, 38, 38, 0.1);
+            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
             position: relative;
             overflow: hidden;
         }
@@ -849,7 +849,7 @@ switch ($reportType) {
             left: 0;
             width: 100%;
             height: 3px;
-            background: linear-gradient(90deg, var(--primary-red), #ef4444);
+            background: linear-gradient(90deg, var(--dark-red), var(--primary-red));
         }
 
         .stat-icon {
@@ -929,10 +929,10 @@ switch ($reportType) {
         .report-card {
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(220, 38, 38, 0.18);
+            border: 1px solid rgba(53, 98, 124, 0.16);
             padding: 30px;
             border-radius: 20px;
-            box-shadow: 0 8px 32px rgba(220, 38, 38, 0.1);
+            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
             position: relative;
             overflow: hidden;
         }
@@ -944,7 +944,7 @@ switch ($reportType) {
             left: 0;
             width: 100%;
             height: 4px;
-            background: linear-gradient(90deg, var(--primary-red), #ef4444);
+            background: linear-gradient(90deg, var(--dark-red), var(--primary-red));
         }
 
         .report-title {
@@ -1009,8 +1009,8 @@ switch ($reportType) {
         }
 
         .badge-logbook {
-            background: rgba(139, 92, 246, 0.2);
-            color: #8b5cf6;
+            background: rgba(53, 98, 124, 0.14);
+            color: #35627c;
         }
 
         .badge-approved {

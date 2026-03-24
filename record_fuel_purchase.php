@@ -317,14 +317,15 @@ if (!$cardAccounts) {
 
 echo '<form method="post" enctype="multipart/form-data" class="form-grid" novalidate>';
 echo '<input type="hidden" name="vehicle_id" value="' . fleet_h($selectedVehicle['id']) . '">';
-echo '<div class="form-group span-4"><label for="purchase_date">Purchase Date</label><input id="purchase_date" type="date" name="purchase_date" value="' . fleet_h($_POST['purchase_date'] ?? date('Y-m-d')) . '" required></div>';
-echo '<div class="form-group span-4"><label for="card_account_id">TOM Card Account</label><select id="card_account_id" name="card_account_id" required><option value="">Select card</option>';
+echo '<div class="form-group span-3"><label for="purchase_date">Purchase Date</label><input id="purchase_date" type="date" name="purchase_date" value="' . fleet_h($_POST['purchase_date'] ?? date('Y-m-d')) . '" required></div>';
+echo '<div class="form-group span-3"><label for="vehicle_fuel_type">Fuel Type</label><input id="vehicle_fuel_type" type="text" value="' . fleet_h($selectedVehicle['fuel_type'] ? ucfirst((string) $selectedVehicle['fuel_type']) : 'Not set') . '" readonly><div class="input-hint">Loaded from the selected vehicle record.</div></div>';
+echo '<div class="form-group span-3"><label for="card_account_id">TOM Card Account</label><select id="card_account_id" name="card_account_id" required><option value="">Select card</option>';
 foreach ($cardAccounts as $account) {
     $selected = ((int) ($_POST['card_account_id'] ?? 0) === (int) $account['id']) ? ' selected' : '';
     echo '<option value="' . fleet_h($account['id']) . '"' . $selected . '>' . fleet_h($account['account_name']) . ($account['fuel_type'] ? ' · ' . fleet_h($account['fuel_type']) : '') . '</option>';
 }
 echo '</select></div>';
-echo '<div class="form-group span-4"><label for="odometer_at_refill_km">Odometer at Refill</label><input id="odometer_at_refill_km" type="number" step="0.1" min="0" name="odometer_at_refill_km" value="' . fleet_h($_POST['odometer_at_refill_km'] ?? number_format($latestKnown, 1, '.', '')) . '" required></div>';
+echo '<div class="form-group span-3"><label for="odometer_at_refill_km">Odometer at Refill</label><input id="odometer_at_refill_km" type="number" step="0.1" min="0" name="odometer_at_refill_km" value="' . fleet_h($_POST['odometer_at_refill_km'] ?? number_format($latestKnown, 1, '.', '')) . '" required></div>';
 echo '<div class="form-group span-6"><label for="station_name">Station</label><input id="station_name" type="text" name="station_name" value="' . fleet_h($_POST['station_name'] ?? '') . '" placeholder="Fuel station name" required></div>';
 echo '<div class="form-group span-6"><label for="receipt_number">Receipt Number</label><input id="receipt_number" type="text" name="receipt_number" value="' . fleet_h($_POST['receipt_number'] ?? '') . '" placeholder="Receipt or invoice number" required></div>';
 echo '<div class="form-group span-4"><label for="litres">Litres</label><input id="litres" type="number" step="0.01" min="0" name="litres" value="' . fleet_h($_POST['litres'] ?? '') . '" required></div>';
