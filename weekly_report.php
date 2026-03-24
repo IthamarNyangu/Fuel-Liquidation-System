@@ -229,7 +229,7 @@ if ($selectedUser) {
                                 </p>
 
                                 <p><strong>Mileage:</strong> 
-                                    <?php echo $req['mileage'] ? number_format($req['mileage'],1).' KM' : 'N/A'; ?>
+                                    <?php echo $req['mileage'] ? number_format((int) round((float) $req['mileage'])) . ' KM' : 'N/A'; ?>
                                 </p>
 
                                 <p><strong>Activity:</strong> 

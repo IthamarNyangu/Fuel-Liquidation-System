@@ -1059,15 +1059,15 @@ $rejected_count = count(array_filter($fuel_requests, fn($r) => $r['status'] === 
                                 </div>
                                 <div class="detail-item">
                                     <span class="detail-label"><i class="fas fa-tachometer-alt"></i> Start KMs</span>
-                                    <span class="detail-value"><?php echo number_format($entry['start_kms'], 2); ?> km</span>
+                                    <span class="detail-value"><?php echo number_format((int) round((float) $entry['start_kms'])); ?> km</span>
                                 </div>
                                 <div class="detail-item">
                                     <span class="detail-label"><i class="fas fa-tachometer-alt"></i> End KMs</span>
-                                    <span class="detail-value"><?php echo number_format($entry['end_kms'], 2); ?> km</span>
+                                    <span class="detail-value"><?php echo number_format((int) round((float) $entry['end_kms'])); ?> km</span>
                                 </div>
                                 <div class="detail-item">
                                     <span class="detail-label"><i class="fas fa-road"></i> Total KMs</span>
-                                    <span class="detail-value highlight"><?php echo number_format($entry['total_kms'], 2); ?> km</span>
+                                    <span class="detail-value highlight"><?php echo number_format((int) round((float) $entry['total_kms'])); ?> km</span>
                                 </div>
                             <?php endif; ?>
                             

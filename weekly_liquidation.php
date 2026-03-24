@@ -163,7 +163,7 @@ echo '<span class="status-pill ' . fleet_h($weekly['status']) . '">' . fleet_h($
 echo '</div>';
 echo '<div class="metric-grid">';
 echo '<div class="metric-card"><div class="metric-label">Movement Legs</div><div class="metric-value">' . number_format((int) $weekly['total_trip_legs']) . '</div><div class="metric-caption">Recorded leg by leg</div></div>';
-echo '<div class="metric-card"><div class="metric-label">Distance</div><div class="metric-value">' . number_format((float) $weekly['total_km'], 1) . '</div><div class="metric-caption">Kilometres for the week</div></div>';
+echo '<div class="metric-card"><div class="metric-label">Distance</div><div class="metric-value">' . fleet_format_km($weekly['total_km'], false) . '</div><div class="metric-caption">Kilometres for the week</div></div>';
 echo '<div class="metric-card"><div class="metric-label">Fuel Purchases</div><div class="metric-value">' . number_format((int) $weekly['total_fuel_purchases']) . '</div><div class="metric-caption">' . number_format((float) $weekly['total_fuel_litres'], 2) . ' litres purchased</div></div>';
 echo '<div class="metric-card"><div class="metric-label">Fuel Amount</div><div class="metric-value">K ' . number_format((float) $weekly['total_fuel_amount'], 2) . '</div><div class="metric-caption">' . ((int) $weekly['missing_receipts'] > 0 ? number_format((int) $weekly['missing_receipts']) . ' receipt(s) missing' : 'Receipts attached') . '</div></div>';
 echo '</div>';
@@ -208,9 +208,9 @@ if (!$tripLegs) {
         echo '</div>';
         echo '<div class="data-item-grid">';
         echo '<div class="detail-pair"><span class="detail-pair-label">Purpose</span><span class="detail-pair-value">' . fleet_h($trip['purpose']) . '</span></div>';
-        echo '<div class="detail-pair"><span class="detail-pair-label">Start km</span><span class="detail-pair-value">' . number_format((float) $trip['odometer_start_km'], 1) . '</span></div>';
-        echo '<div class="detail-pair"><span class="detail-pair-label">End km</span><span class="detail-pair-value">' . number_format((float) $trip['odometer_end_km'], 1) . '</span></div>';
-        echo '<div class="detail-pair"><span class="detail-pair-label">Total km</span><span class="detail-pair-value">' . number_format((float) $trip['total_km'], 1) . '</span></div>';
+        echo '<div class="detail-pair"><span class="detail-pair-label">Start km</span><span class="detail-pair-value">' . fleet_format_km($trip['odometer_start_km']) . '</span></div>';
+        echo '<div class="detail-pair"><span class="detail-pair-label">End km</span><span class="detail-pair-value">' . fleet_format_km($trip['odometer_end_km']) . '</span></div>';
+        echo '<div class="detail-pair"><span class="detail-pair-label">Total km</span><span class="detail-pair-value">' . fleet_format_km($trip['total_km']) . '</span></div>';
         echo '<div class="detail-pair"><span class="detail-pair-label">Passenger / Requester</span><span class="detail-pair-value">' . fleet_h($passengerDisplay ?: 'Not captured') . '</span></div>';
         echo '<div class="detail-pair"><span class="detail-pair-label">Confirmed By</span><span class="detail-pair-value">' . fleet_h($confirmerDisplay ?: 'Not captured') . '</span></div>';
         echo '</div>';
@@ -243,7 +243,7 @@ if (!$fuelPurchases) {
         echo '<div class="detail-pair"><span class="detail-pair-label">Litres</span><span class="detail-pair-value">' . number_format((float) $purchase['litres'], 2) . '</span></div>';
         echo '<div class="detail-pair"><span class="detail-pair-label">Amount</span><span class="detail-pair-value">K ' . number_format((float) $purchase['amount'], 2) . '</span></div>';
         echo '<div class="detail-pair"><span class="detail-pair-label">Unit Price</span><span class="detail-pair-value">K ' . number_format((float) $purchase['unit_price'], 2) . '</span></div>';
-        echo '<div class="detail-pair"><span class="detail-pair-label">Refill Odometer</span><span class="detail-pair-value">' . number_format((float) $purchase['odometer_at_refill_km'], 1) . '</span></div>';
+        echo '<div class="detail-pair"><span class="detail-pair-label">Refill Odometer</span><span class="detail-pair-value">' . fleet_format_km($purchase['odometer_at_refill_km']) . '</span></div>';
         echo '</div>';
         echo '<div class="button-row" style="margin-top:12px;">';
         if (!empty($purchase['receipt_attachment_id'])) {

@@ -33,7 +33,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $vehicle_id = $_POST['vehicle_id'];
         $requested_amount = $_POST['requested_amount'];
         $float_account = $_POST['float_account'];
-        $mileage = $_POST['mileage'];
+        $mileageRaw = trim((string) ($_POST['mileage'] ?? ''));
+        $mileage = (int) $mileageRaw;
         $filling_station = $_POST['filling_station'];
         $activity_name = $_POST['activity_name'];
         $approver_id = $_POST['approver_id'];
@@ -54,6 +55,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         
+        if (!preg_match('/^\d+$/', $mileageRaw)) {
+            throw new Exception('Current mileage must be a whole number.');
+        }
+
         // Get current fuel price
         try {
             $stmt = $conn->query("SELECT fuel_price FROM settings WHERE id = 1");
@@ -485,9 +490,9 @@ $assignedVehicleCount = count($assignedVehicles);
                                 type="number" 
                                 name="mileage" 
                                 id="mileage"
-                                step="0.01" 
+                                step="1" 
                                 min="0" 
-                                placeholder="Select vehicle first"
+                                placeholder="e.g. 12000"
                                 required
                                 readonly
                                 style="background-color: var(--gray-100); cursor: not-allowed;"
@@ -616,7 +621,7 @@ $assignedVehicleCount = count($assignedVehicles);
                 floatAccountInput.style.cursor = 'default';
                 
                 // Update mileage
-                mileageInput.value = currentMileage.toFixed(2);
+                mileageInput.value = Math.round(currentMileage).toString();
                 mileageInput.style.backgroundColor = '#dcfce7';
                 mileageInput.style.borderColor = '#86efac';
                 mileageInput.style.cursor = 'default';

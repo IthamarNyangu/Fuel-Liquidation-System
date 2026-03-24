@@ -605,7 +605,7 @@ if ($has_vehicle_assignments) {
                   <tr>
                     <td><strong><?php echo htmlspecialchars($vehicle['vehicle_name']); ?></strong></td>
                     <td><?php echo htmlspecialchars($vehicle['number_plate']); ?></td>
-                    <td><?php echo number_format($vehicle['current_mileage'], 2); ?> km</td>
+                    <td><?php echo number_format((int) round((float) $vehicle['current_mileage'])); ?> km</td>
                     <td>
                       <?php if ($vehicle['driver_name']): ?>
                         <div class="driver-info">

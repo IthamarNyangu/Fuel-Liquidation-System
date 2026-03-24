@@ -30,6 +30,36 @@ function fleet_h($value): string
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
+function fleet_km_value($value): int
+{
+    if ($value === null || $value === '') {
+        return 0;
+    }
+
+    return (int) round((float) $value);
+}
+
+function fleet_km_input_value($value): string
+{
+    return (string) fleet_km_value($value);
+}
+
+function fleet_format_km($value, bool $withSuffix = true): string
+{
+    if ($value === null || $value === '') {
+        return '--';
+    }
+
+    $formatted = number_format(fleet_km_value($value));
+
+    return $withSuffix ? $formatted . ' km' : $formatted;
+}
+
+function fleet_is_valid_km_input($value): bool
+{
+    return preg_match('/^\d+$/', trim((string) $value)) === 1;
+}
+
 function fleet_current_user_context(): array
 {
     $role = $_SESSION['user_role'] ?? 'staff';
@@ -349,7 +379,7 @@ function fleet_attach_item_to_weekly(PDO $pdo, int $weeklyId, string $itemType, 
     $stmt->execute([$weeklyId, $recordId, $recordId]);
 }
 
-function fleet_get_latest_vehicle_odometer(PDO $pdo, int $vehicleId): float
+function fleet_get_latest_vehicle_odometer(PDO $pdo, int $vehicleId): int
 {
     $stmt = $pdo->prepare("
         SELECT MAX(reading_value) AS latest_reading
@@ -375,7 +405,7 @@ function fleet_get_latest_vehicle_odometer(PDO $pdo, int $vehicleId): float
     ");
     $stmt->execute([$vehicleId, $vehicleId, $vehicleId]);
 
-    return (float) ($stmt->fetchColumn() ?: 0);
+    return fleet_km_value($stmt->fetchColumn() ?: 0);
 }
 
 function fleet_fetch_confirmable_users(PDO $pdo, ?int $facilityId = null): array

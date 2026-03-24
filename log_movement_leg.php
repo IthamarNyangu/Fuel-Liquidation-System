@@ -84,7 +84,7 @@ function movement_format_km($value, string $suffix = ''): string
         return '--';
     }
 
-    return number_format((float) $value, 1) . $suffix;
+    return fleet_format_km($value, $suffix === '');
 }
 
 function movement_find_confirmer(array $confirmers, int $userId): ?array
@@ -374,8 +374,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
             if (movement_text_length($purpose) > 80) {
                 throw new RuntimeException('Purpose must be 80 characters or fewer.');
             }
-            if ($startKmRaw === '' || !is_numeric($startKmRaw)) {
-                throw new RuntimeException('Start KM must be a valid number.');
+            if (!fleet_is_valid_km_input($startKmRaw)) {
+                throw new RuntimeException('Start KM must be a whole number.');
             }
 
             $confirmer = $confirmedByUserId > 0 ? movement_find_confirmer($systemConfirmers, $confirmedByUserId) : null;
@@ -420,10 +420,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
                 );
             }
 
-            $startKm = (float) $startKmRaw;
+            $startKm = fleet_km_value($startKmRaw);
             $latestKnown = fleet_get_latest_vehicle_odometer($pdo, (int) $selectedVehicle['id']);
             if ($startKm < $latestKnown) {
-                throw new RuntimeException('Start KM cannot be lower than the last known reading of ' . number_format($latestKnown, 1) . ' km.');
+                throw new RuntimeException('Start KM cannot be lower than the last known reading of ' . fleet_format_km($latestKnown) . '.');
             }
 
             $issueNotes = [];
@@ -531,8 +531,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
             if (!movement_is_valid_time($timeIn)) {
                 throw new RuntimeException('Arrival time is required to complete the leg.');
             }
-            if ($endKmRaw === '' || !is_numeric($endKmRaw)) {
-                throw new RuntimeException('End KM is required to complete the leg.');
+            if (!fleet_is_valid_km_input($endKmRaw)) {
+                throw new RuntimeException('End KM must be a whole number.');
             }
 
             $departureAt = movement_trip_start_datetime($tripLeg);
@@ -544,8 +544,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
                 throw new RuntimeException('Arrival date and time must be after the departure date and time.');
             }
 
-            $endKm = (float) $endKmRaw;
-            $startKm = (float) $tripLeg['odometer_start_km'];
+            $endKm = fleet_km_value($endKmRaw);
+            $startKm = fleet_km_value($tripLeg['odometer_start_km']);
             if ($endKm <= $startKm) {
                 throw new RuntimeException('End KM must be greater than Start KM.');
             }
@@ -636,7 +636,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
                 'movement_date' => $arrivalDate,
                 'time_out' => $timeIn,
                 'from_location' => (string) $tripLeg['to_location'],
-                'odometer_start_km' => number_format($endKm, 1, '.', ''),
+                'odometer_start_km' => fleet_km_input_value($endKm),
                 'confirmed_by_user_id' => !empty($tripLeg['confirmed_by_user_id']) ? (string) $tripLeg['confirmed_by_user_id'] : null,
                 'legs_page' => $returnLegsPage,
                 'prepared' => '1',
@@ -819,7 +819,7 @@ $startFormValues = [
     'purpose' => $seedPurpose,
     'purpose_choice' => $_POST['purpose_choice'] ?? ($seedPurpose === '' ? '' : ($selectedPurposeOption ?? 'Other')),
     'purpose_other' => $_POST['purpose_other'] ?? ($selectedPurposeOption ? '' : $seedPurpose),
-    'odometer_start_km' => $_POST['odometer_start_km'] ?? ($_GET['odometer_start_km'] ?? number_format((float) ($defaultSourceLeg['odometer_end_km'] ?? $latestKnown), 1, '.', '')),
+    'odometer_start_km' => $_POST['odometer_start_km'] ?? ($_GET['odometer_start_km'] ?? fleet_km_input_value($defaultSourceLeg['odometer_end_km'] ?? $latestKnown)),
     'confirmed_by_user_id' => $_POST['confirmed_by_user_id'] ?? ($_GET['confirmed_by_user_id'] ?? ($defaultSourceLeg['confirmed_by_user_id'] ?? '')),
     'passenger_name' => $_POST['passenger_name'] ?? ($_GET['passenger_name'] ?? ''),
 ];
@@ -831,12 +831,12 @@ $defaultCompleteArrivalDate = $_POST['arrival_date']
     ?? ($defaultCompleteDateTime['date'] ?? ($inProgressLeg['movement_date'] ?? date('Y-m-d')));
 $defaultCompleteTimeIn = $_POST['time_in']
     ?? ($defaultCompleteDateTime['time'] ?? date('H:i'));
-$defaultCompleteEndKm = number_format($latestKnown, 1, '.', '');
+$defaultCompleteEndKm = fleet_km_input_value($latestKnown);
 if ($inProgressLeg) {
-    $inProgressStartKm = (float) $inProgressLeg['odometer_start_km'];
+    $inProgressStartKm = fleet_km_value($inProgressLeg['odometer_start_km']);
     $defaultCompleteEndKm = $latestKnown > $inProgressStartKm
-        ? number_format($latestKnown, 1, '.', '')
-        : number_format($inProgressStartKm + 0.1, 1, '.', '');
+        ? fleet_km_input_value($latestKnown)
+        : fleet_km_input_value($inProgressStartKm + 1);
 }
 
 $completeFormValues = [
@@ -915,8 +915,8 @@ if ($inProgressLeg && $openLegBelongsToDriver) {
     echo '<input type="hidden" name="movement_action" value="complete_leg">';
     echo '<div class="form-group span-4"><label for="arrival_date">Arrival Date</label><input id="arrival_date" type="date" name="arrival_date" value="' . fleet_h($completeFormValues['arrival_date']) . '" required></div>';
     echo '<div class="form-group span-4"><label for="time_in">Arrival Time</label><input id="time_in" type="time" name="time_in" value="' . fleet_h($completeFormValues['time_in']) . '" required></div>';
-    echo '<div class="form-group span-4"><label for="odometer_end_km">End KM</label><input id="odometer_end_km" type="number" step="0.1" min="' . fleet_h(number_format(((float) $inProgressLeg['odometer_start_km']) + 0.1, 1, '.', '')) . '" name="odometer_end_km" value="' . fleet_h($completeFormValues['odometer_end_km']) . '" data-start-km="' . fleet_h(number_format((float) $inProgressLeg['odometer_start_km'], 1, '.', '')) . '" required></div>';
-    echo '<div class="form-group span-4"><label for="total_km_preview">Total KM</label><input id="total_km_preview" type="text" value="0.0 km" readonly><div class="input-hint">Calculated when the leg is completed.</div></div>';
+    echo '<div class="form-group span-4"><label for="odometer_end_km">End KM</label><input id="odometer_end_km" type="number" step="1" min="' . fleet_h(fleet_km_input_value(fleet_km_value($inProgressLeg['odometer_start_km']) + 1)) . '" name="odometer_end_km" placeholder="e.g. 12005" value="' . fleet_h($completeFormValues['odometer_end_km']) . '" data-start-km="' . fleet_h(fleet_km_input_value($inProgressLeg['odometer_start_km'])) . '" required></div>';
+    echo '<div class="form-group span-4"><label for="total_km_preview">Total KM</label><input id="total_km_preview" type="text" value="0 km" readonly><div class="input-hint">Calculated when the leg is completed.</div></div>';
     echo '<div class="form-group span-12"><div class="button-row"><button class="button" type="submit">Complete Leg</button><a class="button-secondary" href="weekly_liquidation.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode((string) $inProgressLeg['week_start_date']) . '">Review This Week</a></div></div>';
     echo '</form>';
     echo '</section>';
@@ -933,7 +933,7 @@ if ($inProgressLeg && $openLegBelongsToDriver) {
     echo '<input type="hidden" name="movement_action" value="start_leg">';
     echo '<div class="form-group span-4"><label for="movement_date">Departure Date</label><input id="movement_date" type="date" name="movement_date" value="' . fleet_h($startFormValues['movement_date']) . '" data-source-date="' . fleet_h((string) movement_trip_reference_date($defaultSourceLeg ?? [])) . '" data-source-time="' . fleet_h($defaultSourceTimeOut) . '" required></div>';
     echo '<div class="form-group span-4"><label for="time_out">Departure Time</label><input id="time_out" type="time" name="time_out" value="' . fleet_h($startFormValues['time_out']) . '" required></div>';
-    echo '<div class="form-group span-4"><label for="odometer_start_km">Start KM</label><input id="odometer_start_km" type="number" step="0.1" min="0" name="odometer_start_km" value="' . fleet_h($startFormValues['odometer_start_km']) . '" required><div class="input-hint">Must not be below ' . number_format($latestKnown, 1) . ' km.</div></div>';
+    echo '<div class="form-group span-4"><label for="odometer_start_km">Start KM</label><input id="odometer_start_km" type="number" step="1" min="0" name="odometer_start_km" placeholder="e.g. 12000" value="' . fleet_h($startFormValues['odometer_start_km']) . '" required><div class="input-hint">Must not be below ' . fleet_format_km($latestKnown) . '.</div></div>';
     echo '<div class="form-group span-6"><label for="from_location">From</label><input id="from_location" type="text" name="from_location" value="' . fleet_h($startFormValues['from_location']) . '" placeholder="Departure point" required></div>';
     echo '<div class="form-group span-6"><label for="to_location">To</label><input id="to_location" type="text" name="to_location" value="' . fleet_h($startFormValues['to_location']) . '" placeholder="Destination" required></div>';
     echo '<div id="purpose_choice_group" class="form-group span-4"><label for="purpose_choice">Purpose / Activity</label><select id="purpose_choice" name="purpose_choice" required>';
@@ -1063,7 +1063,7 @@ echo 'const passengerGroup=document.getElementById("passenger_group");';
 echo 'if(purposeChoiceInput&&purposeOtherGroup&&purposeOtherInput&&confirmedByGroup&&passengerGroup){const togglePurposeOther=function(){const isOther=purposeChoiceInput.value==="Other";purposeOtherGroup.style.display=isOther?"":"none";purposeOtherInput.required=isOther;confirmedByGroup.className="form-group "+(isOther?"span-6":"span-4");passengerGroup.className="form-group "+(isOther?"span-6":"span-4");};purposeChoiceInput.addEventListener("change",togglePurposeOther);togglePurposeOther();}';
 echo 'const endKmInput=document.getElementById("odometer_end_km");';
 echo 'const totalKmPreview=document.getElementById("total_km_preview");';
-echo 'if(endKmInput&&totalKmPreview){const startKm=parseFloat(endKmInput.dataset.startKm||"0")||0;const updateTripKmPreview=function(){const end=parseFloat(endKmInput.value)||0;const total=Math.max(0,end-startKm);totalKmPreview.value=total.toFixed(1)+" km";};endKmInput.addEventListener("input",updateTripKmPreview);updateTripKmPreview();}';
+echo 'if(endKmInput&&totalKmPreview){const startKm=parseInt(endKmInput.dataset.startKm||"0",10)||0;const updateTripKmPreview=function(){const end=parseInt(endKmInput.value||"0",10)||0;const total=Math.max(0,end-startKm);totalKmPreview.value=total.toLocaleString("en-US")+" km";};endKmInput.addEventListener("input",updateTripKmPreview);updateTripKmPreview();}';
 echo '</script>';
 
 fleet_render_shell_end();

@@ -36,26 +36,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($_POST['action'] === 'add') {
                 $vehicleName = trim($_POST['vehicle_name']);
                 $numberPlate = strtoupper(trim($_POST['number_plate']));
+                $assetType = strtolower(trim((string) ($_POST['asset_type'] ?? 'car')));
                 $fuelType = strtolower(trim((string) ($_POST['fuel_type'] ?? '')));
                 $floatLimit = floatval($_POST['float_limit']);
                 $initialBalance = floatval($_POST['initial_balance']);
-                $initialMileage = floatval($_POST['initial_mileage']);
+                $initialMileageRaw = trim((string) ($_POST['initial_mileage'] ?? '0'));
+                $initialMileage = (int) $initialMileageRaw;
                 
                 if (empty($vehicleName) || empty($numberPlate)) {
                     throw new Exception('Vehicle name and number plate are required');
                 }
 
-                if ($fuelType !== '' && !in_array($fuelType, ['petrol', 'diesel'], true)) {
-                    throw new Exception('Fuel type must be petrol or diesel.');
+                if (!in_array($assetType, ['car', 'motorcycle'], true)) {
+                    throw new Exception('Vehicle type must be car or motorcycle.');
+                }
+
+                if (!in_array($fuelType, ['petrol', 'diesel'], true)) {
+                    throw new Exception('Fuel type is required and must be petrol or diesel.');
+                }
+
+                if (!preg_match('/^\d+$/', $initialMileageRaw)) {
+                    throw new Exception('Initial mileage must be a whole number.');
                 }
                 
                 // Set facility_id based on user type
                 if ($is_super_admin) {
                     // Super admin can choose facility or leave null
                     $facility_id = !empty($_POST['facility_id']) ? intval($_POST['facility_id']) : null;
+                    if (!$facility_id) {
+                        throw new Exception('Facility is required when adding a vehicle.');
+                    }
                 } else {
                     // Regular users: auto-assign to their facility
                     $facility_id = $user_facility_id;
+                }
+
+                if (!is_numeric((string) ($_POST['float_limit'] ?? '')) || $floatLimit < 0) {
+                    throw new Exception('Card limit is required and must be zero or higher.');
+                }
+
+                if (!is_numeric((string) ($_POST['initial_balance'] ?? '')) || $initialBalance < 0) {
+                    throw new Exception('Opening balance is required and must be zero or higher.');
                 }
                 
                 // Auto-generate float account name
@@ -63,13 +84,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 $stmt = $conn->prepare("
                     INSERT INTO vehicles 
-                    (vehicle_name, number_plate, fuel_type, float_account_name, float_balance, float_limit, current_mileage, facility_id) 
-                    VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
+                    (vehicle_name, number_plate, asset_type, fuel_type, float_account_name, float_balance, float_limit, current_mileage, facility_id) 
+                    VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
                 ");
-                $stmt->bind_param("ssssdddi", $vehicleName, $numberPlate, $fuelType, $floatAccountName, $initialBalance, $floatLimit, $initialMileage, $facility_id);
+                $stmt->bind_param("sssssdddi", $vehicleName, $numberPlate, $assetType, $fuelType, $floatAccountName, $initialBalance, $floatLimit, $initialMileage, $facility_id);
                 $stmt->execute();
                 
-                $_SESSION['success_message'] = 'Vehicle added successfully with float account!';
+                $_SESSION['success_message'] = 'Vehicle added successfully with card account!';
                 header("Location: manage_vehicles.php");
                 exit();
             } 
@@ -77,6 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $id = intval($_POST['vehicle_id']);
                 $vehicleName = trim($_POST['vehicle_name']);
                 $numberPlate = strtoupper(trim($_POST['number_plate']));
+                $assetType = strtolower(trim((string) ($_POST['asset_type'] ?? 'car')));
                 $fuelType = strtolower(trim((string) ($_POST['fuel_type'] ?? '')));
                 $floatLimit = floatval($_POST['float_limit']);
                 
@@ -84,19 +106,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new Exception('Vehicle name and number plate are required');
                 }
 
-                if ($fuelType !== '' && !in_array($fuelType, ['petrol', 'diesel'], true)) {
-                    throw new Exception('Fuel type must be petrol or diesel.');
+                if (!in_array($assetType, ['car', 'motorcycle'], true)) {
+                    throw new Exception('Vehicle type must be car or motorcycle.');
+                }
+
+                if (!in_array($fuelType, ['petrol', 'diesel'], true)) {
+                    throw new Exception('Fuel type is required and must be petrol or diesel.');
+                }
+
+                if (!is_numeric((string) ($_POST['float_limit'] ?? '')) || $floatLimit < 0) {
+                    throw new Exception('Card limit is required and must be zero or higher.');
                 }
                 
-                // Update float account name
+                // Update card account name
                 $floatAccountName = $vehicleName . ' (' . $numberPlate . ')';
                 
                 $stmt = $conn->prepare("
                     UPDATE vehicles 
-                    SET vehicle_name = ?, number_plate = ?, fuel_type = NULLIF(?, ''), float_account_name = ?, float_limit = ?
+                    SET vehicle_name = ?, number_plate = ?, asset_type = ?, fuel_type = NULLIF(?, ''), float_account_name = ?, float_limit = ?
                     WHERE id = ?
                 ");
-                $stmt->bind_param("ssssdi", $vehicleName, $numberPlate, $fuelType, $floatAccountName, $floatLimit, $id);
+                $stmt->bind_param("sssssdi", $vehicleName, $numberPlate, $assetType, $fuelType, $floatAccountName, $floatLimit, $id);
                 $stmt->execute();
                 
                 $_SESSION['success_message'] = 'Vehicle updated successfully!';
@@ -141,8 +171,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Get search/filter parameters
 $search = $_GET['search'] ?? '';
-$sortBy = $_GET['sort'] ?? 'vehicle_name';
-$sortOrder = $_GET['order'] ?? 'ASC';
+$assignmentStatus = $_GET['assignment_status'] ?? '';
+$fuelTypeFilter = $_GET['fuel_type'] ?? '';
+$facilityFilter = $_GET['facility_id'] ?? '';
+$sortToken = $_GET['sort_token'] ?? '';
+$sortMap = [
+    'vehicle_name_asc' => ['vehicle_name', 'ASC'],
+    'vehicle_name_desc' => ['vehicle_name', 'DESC'],
+    'number_plate_asc' => ['number_plate', 'ASC'],
+    'number_plate_desc' => ['number_plate', 'DESC'],
+    'created_at_desc' => ['created_at', 'DESC'],
+    'created_at_asc' => ['created_at', 'ASC'],
+];
+
+if ($sortToken && isset($sortMap[$sortToken])) {
+    [$sortBy, $sortOrder] = $sortMap[$sortToken];
+} else {
+    $sortBy = $_GET['sort'] ?? 'vehicle_name';
+    $sortOrder = $_GET['order'] ?? 'ASC';
+    $sortToken = $sortBy . '_' . strtolower($sortOrder);
+}
+
+$assignmentStatus = in_array($assignmentStatus, ['assigned', 'unassigned'], true) ? $assignmentStatus : '';
+$fuelTypeFilter = in_array($fuelTypeFilter, ['petrol', 'diesel', 'not_set'], true) ? $fuelTypeFilter : '';
+$facilityFilter = ctype_digit((string) $facilityFilter) ? (int) $facilityFilter : 0;
 
 // Build query with enhanced statistics
 $query = "SELECT v.*, 
@@ -165,6 +217,10 @@ if (!$is_super_admin && $user_facility_id) {
     $query .= " AND v.facility_id = ?";
     $params[] = $user_facility_id;
     $types .= 'i';
+} elseif ($is_super_admin && $facilityFilter > 0) {
+    $query .= " AND v.facility_id = ?";
+    $params[] = $facilityFilter;
+    $types .= 'i';
 }
 
 if ($search) {
@@ -173,6 +229,20 @@ if ($search) {
     $params[] = $searchParam;
     $params[] = $searchParam;
     $types .= 'ss';
+}
+
+if ($assignmentStatus === 'assigned') {
+    $query .= " AND v.current_driver_id IS NOT NULL";
+} elseif ($assignmentStatus === 'unassigned') {
+    $query .= " AND v.current_driver_id IS NULL";
+}
+
+if ($fuelTypeFilter === 'petrol' || $fuelTypeFilter === 'diesel') {
+    $query .= " AND v.fuel_type = ?";
+    $params[] = $fuelTypeFilter;
+    $types .= 's';
+} elseif ($fuelTypeFilter === 'not_set') {
+    $query .= " AND (v.fuel_type IS NULL OR v.fuel_type = '')";
 }
 
 $allowedSort = ['vehicle_name', 'number_plate', 'created_at'];
@@ -188,18 +258,14 @@ $stmt->execute();
 $result = $stmt->get_result();
 $vehicles = $result->fetch_all(MYSQLI_ASSOC);
 
-// Get total count with facility filter
-$countQuery = "SELECT COUNT(*) as count FROM vehicles WHERE 1=1";
-if (!$is_super_admin && $user_facility_id) {
-    $countQuery .= " AND facility_id = ?";
-    $countStmt = $conn->prepare($countQuery);
-    $countStmt->bind_param("i", $user_facility_id);
-    $countStmt->execute();
-    $totalRow = $countStmt->get_result()->fetch_assoc();
-} else {
-    $totalRow = $conn->query($countQuery)->fetch_assoc();
+$totalVehicles = count($vehicles);
+$assignedVehicles = 0;
+foreach ($vehicles as $vehicle) {
+    if (!empty($vehicle['driver_name'])) {
+        $assignedVehicles++;
+    }
 }
-$totalVehicles = $totalRow['count'];
+$unassignedVehicles = $totalVehicles - $assignedVehicles;
 
 // Fetch all users for assignment
 $usersStmt = $conn->query("SELECT id, name, email FROM users ORDER BY name");
@@ -211,7 +277,7 @@ $facilities = $facilitiesStmt->fetch_all(MYSQLI_ASSOC);
 
 // Get facility display name
 if ($is_super_admin) {
-    $facility_display = "All Facilities";
+    $facility_display = '';
 } else {
     $facility_query = "SELECT facility_name FROM facilities WHERE id = ?";
     $facility_stmt = $conn->prepare($facility_query);
@@ -980,55 +1046,6 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
             box-shadow: 0 12px 26px rgba(53, 98, 124, 0.22);
         }
 
-        /* Vehicle Details View */
-        .details-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 15px;
-            margin-bottom: 25px;
-        }
-
-        .detail-card {
-            background: var(--gray-50);
-            padding: 20px;
-            border-radius: 16px;
-            border: 2px solid var(--gray-200);
-        }
-
-        .detail-card h4 {
-            color: var(--gray-600);
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .detail-card .value {
-            font-size: 24px;
-            font-weight: 800;
-            color: var(--gray-900);
-        }
-
-        .detail-card.highlight .value {
-            color: var(--primary-red);
-        }
-
-        .section-title {
-            font-size: 18px;
-            font-weight: 800;
-            color: var(--gray-900);
-            margin: 25px 0 15px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid var(--gray-200);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
         /* Alert Messages */
         .alert {
             padding: 16px 20px;
@@ -1135,10 +1152,6 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
                 width: 100%;
             }
 
-            .details-grid {
-                grid-template-columns: 1fr;
-            }
-
             .vehicle-actions {
                 flex-wrap: wrap;
             }
@@ -1148,379 +1161,380 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
             }
         }
     </style>
+    <link rel="stylesheet" type="text/css" href="manage_vehicles.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/manage_vehicles.css')); ?>">
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="header-content">
-                <h1>
-                    <i class="fas fa-car"></i> Vehicle Management
-                    <span class="facility-badge <?php echo $is_super_admin ? 'super-admin' : ''; ?>">
-                        <i class="fas fa-<?php echo $is_super_admin ? 'crown' : 'building'; ?>"></i> 
-                        <?php echo htmlspecialchars($facility_display); ?>
-                    </span>
-                </h1>
-                <div class="header-actions">
-                    <a href="dashboard.php" class="btn btn-secondary">
-                        <i class="fas fa-arrow-left"></i> Back to Dashboard
-                    </a>
-                    <button onclick="openAddModal()" class="btn btn-primary">
-                        <i class="fas fa-plus-circle"></i> Add New Vehicle
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <?php if ($message): ?>
-            <div class="alert alert-<?php echo $messageType; ?>">
-                <i class="fas fa-<?php echo $messageType === 'success' ? 'check-circle' : 'exclamation-circle'; ?>"></i>
-                <?php echo htmlspecialchars($message); ?>
-            </div>
-        <?php endif; ?>
-
-        <!-- Tabs -->
-        <div class="tabs-container">
-            <div class="tabs">
-                <button class="tab active" onclick="switchTab('vehicles')">
-                    <i class="fas fa-car"></i> Vehicles
-                </button>
-                <button class="tab" onclick="switchTab('assignments')">
-                    <i class="fas fa-user-check"></i> Vehicle Assignments
-                </button>
-            </div>
-        </div>
-
-        <!-- Vehicles Tab Content -->
-        <div id="vehicles-tab" class="tab-content active">
-            <!-- Stats -->
-            <div class="stats">
-                <div class="stat-card">
-                    <i class="fas fa-car stat-icon"></i>
-                    <h3><i class="fas fa-list"></i> Total Vehicles</h3>
-                    <div class="stat-value"><?php echo $totalVehicles; ?></div>
-                </div>
-            </div>
-
-            <!-- Controls -->
-            <div class="controls">
-                <div class="search-box">
-                    <i class="fas fa-search search-icon"></i>
-                    <input 
-                        type="text" 
-                        id="searchInput" 
-                        placeholder="Search vehicles by name or plate number..." 
-                        value="<?php echo htmlspecialchars($search); ?>"
-                        onkeyup="handleSearch(event)">
-                    <?php if ($search): ?>
-                        <button class="clear-search" onclick="clearSearch()">
-                            <i class="fas fa-times"></i>
-                        </button>
+        <div class="vm-page">
+            <header class="vm-header">
+                <div class="vm-header-main">
+                    <div class="vm-title-block">
+                        <p class="vm-kicker">Fleet Administration</p>
+                        <h1>Vehicle Management</h1>
+                        <p class="vm-subtitle">Maintain vehicle records, facility ownership, and driver assignment readiness in one place.</p>
+                    </div>
+                    <?php if (!$is_super_admin): ?>
+                        <span class="vm-scope-chip">
+                            <?php echo 'Facility: ' . htmlspecialchars($facility_display); ?>
+                        </span>
                     <?php endif; ?>
                 </div>
-
-                <select class="sort-select" onchange="handleSort(this.value)">
-                    <option value="">Sort by...</option>
-                    <option value="vehicle_name_asc" <?php echo ($sortBy === 'vehicle_name' && $sortOrder === 'ASC') ? 'selected' : ''; ?>>Name (A-Z)</option>
-                    <option value="vehicle_name_desc" <?php echo ($sortBy === 'vehicle_name' && $sortOrder === 'DESC') ? 'selected' : ''; ?>>Name (Z-A)</option>
-                    <option value="number_plate_asc" <?php echo ($sortBy === 'number_plate' && $sortOrder === 'ASC') ? 'selected' : ''; ?>>Plate (A-Z)</option>
-                    <option value="number_plate_desc" <?php echo ($sortBy === 'number_plate' && $sortOrder === 'DESC') ? 'selected' : ''; ?>>Plate (Z-A)</option>
-                    <option value="created_at_desc" <?php echo ($sortBy === 'created_at' && $sortOrder === 'DESC') ? 'selected' : ''; ?>>Newest First</option>
-                    <option value="created_at_asc" <?php echo ($sortBy === 'created_at' && $sortOrder === 'ASC') ? 'selected' : ''; ?>>Oldest First</option>
-                </select>
-            </div>
-
-            <!-- Vehicles Grid -->
-            <?php if (count($vehicles) > 0): ?>
-                <div class="vehicles-grid">
-                    <?php foreach ($vehicles as $vehicle): ?>
-                        <?php $totalTrips = $vehicle['requisition_count'] + $vehicle['logbook_count']; ?>
-                        <div class="vehicle-card" onclick='openViewModal(<?php echo json_encode($vehicle); ?>)'>
-                            <div class="vehicle-icon-bg">
-                                <i class="fas fa-car"></i>
-                            </div>
-                            
-                            <?php if ($vehicle['driver_name']): ?>
-                                <div class="driver-badge">
-                                    <i class="fas fa-user-check"></i> <?php echo htmlspecialchars($vehicle['driver_name']); ?>
-                                </div>
-                            <?php else: ?>
-                                <div class="driver-badge no-driver-badge">
-                                    <i class="fas fa-user-times"></i> Unassigned
-                                </div>
-                            <?php endif; ?>
-                            
-                            <?php if ($is_super_admin && $vehicle['facility_name']): ?>
-                                <div class="vehicle-facility">
-                                    <i class="fas fa-building"></i> <?php echo htmlspecialchars($vehicle['facility_name']); ?>
-                                </div>
-                            <?php endif; ?>
-                            
-                            <div class="vehicle-name"><?php echo htmlspecialchars($vehicle['vehicle_name']); ?></div>
-                            <div class="vehicle-plate">
-                                <i class="fas fa-id-card"></i> <?php echo htmlspecialchars($vehicle['number_plate']); ?>
-                            </div>
-                            
-                            <div class="vehicle-info">
-                                <div class="info-row">
-                                    <span class="info-label">
-                                        <i class="fas fa-gas-pump"></i> Fuel Type
-                                    </span>
-                                    <span class="info-value"><?php echo $vehicle['fuel_type'] ? htmlspecialchars(ucfirst($vehicle['fuel_type'])) : 'Not set'; ?></span>
-                                </div>
-                                <div class="info-row">
-                                    <span class="info-label">
-                                        <i class="fas fa-road"></i> Total Trips
-                                    </span>
-                                    <span class="info-value"><?php echo $totalTrips; ?></span>
-                                </div>
-                                <div class="info-row">
-                                    <span class="info-label">
-                                        <i class="fas fa-tachometer-alt"></i> Mileage
-                                    </span>
-                                    <span class="info-value"><?php echo number_format($vehicle['current_mileage'], 2); ?> km</span>
-                                </div>
-                                <div class="info-row">
-                                    <span class="info-label">
-                                        <i class="fas fa-wallet"></i> Float Balance
-                                    </span>
-                                    <span class="info-value">K <?php echo number_format($vehicle['float_balance'], 2); ?></span>
-                                </div>
-                            </div>
-
-                            <div class="vehicle-actions" onclick="event.stopPropagation()">
-                                <button onclick='openViewModal(<?php echo json_encode($vehicle); ?>)' class="btn-small btn-view">
-                                    <i class="fas fa-eye"></i> View
-                                </button>
-                                <button onclick='openAssignModal(<?php echo json_encode($vehicle); ?>)' class="btn-small btn-assign">
-                                    <i class="fas fa-user-check"></i> <?php echo $vehicle['driver_name'] ? 'Reassign' : 'Assign'; ?>
-                                </button>
-                                <button onclick='openEditModal(<?php echo json_encode($vehicle); ?>)' class="btn-small btn-edit">
-                                    <i class="fas fa-edit"></i> Edit
-                                </button>
-                                <button onclick="confirmDelete(<?php echo $vehicle['id']; ?>, '<?php echo htmlspecialchars($vehicle['vehicle_name'], ENT_QUOTES); ?>')" class="btn-small btn-delete">
-                                    <i class="fas fa-trash"></i> Delete
-                                </button>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
+                <div class="vm-header-actions">
+                    <a href="dashboard.php" class="vm-btn vm-btn-secondary">Back to Dashboard</a>
+                    <button type="button" onclick="openAddModal()" class="vm-btn vm-btn-primary">Add Vehicle</button>
                 </div>
-            <?php else: ?>
-                <div class="empty-state">
-                    <i class="fas fa-car"></i>
-                    <h3>No Vehicles Found</h3>
-                    <p>
-                        <?php if ($search): ?>
-                            No vehicles match your search criteria.
-                        <?php else: ?>
-                            Get started by adding your first vehicle to the system.
-                        <?php endif; ?>
-                    </p>
-                    <?php if (!$search): ?>
-                        <button onclick="openAddModal()" class="btn btn-primary">
-                            <i class="fas fa-plus-circle"></i> Add Your First Vehicle
-                        </button>
-                    <?php endif; ?>
+            </header>
+
+            <?php if ($message): ?>
+                <div class="vm-alert vm-alert-<?php echo $messageType === 'success' ? 'success' : 'error'; ?>">
+                    <span><?php echo htmlspecialchars($message); ?></span>
                 </div>
             <?php endif; ?>
-        </div>
 
-        <!-- Assignments Tab Content -->
-        <div id="assignments-tab" class="tab-content">
-            <div class="assignment-table-container">
-                <h2 style="margin-bottom: 20px; color: var(--gray-900); font-size: 24px; font-weight: 800;">
-                    <i class="fas fa-user-check"></i> Active Vehicle Assignments
-                </h2>
-                
-                <p style="color: var(--gray-600); margin-bottom: 25px; font-size: 14px;">
-                    <i class="fas fa-info-circle"></i> 
-                    <strong>Note:</strong> Drivers can be assigned to multiple vehicles. Each vehicle can only have one driver at a time.
-                </p>
-                
-                <?php if (count($assignments) > 0): ?>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Assigned Date</th>
-                                <th>Vehicle</th>
-                                <th>Number Plate</th>
-                                <th>Driver</th>
-                                <th>Assigned By</th>
-                                <th>Notes</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($assignments as $assignment): ?>
-                                <tr>
-                                    <td><?php echo date('M d, Y', strtotime($assignment['assigned_date'])); ?></td>
-                                    <td><strong><?php echo htmlspecialchars($assignment['vehicle_name']); ?></strong></td>
-                                    <td>
-                                        <div style="background: var(--light-red); color: var(--primary-red); padding: 4px 10px; border-radius: 6px; display: inline-block; font-weight: 700; font-size: 12px;">
-                                            <i class="fas fa-id-card"></i> <?php echo htmlspecialchars($assignment['number_plate']); ?>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div style="display: flex; align-items: center; gap: 8px;">
-                                            <div style="width: 32px; height: 32px; background: #3b82f6; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;">
-                                                <?php echo strtoupper(substr($assignment['driver_name'], 0, 1)); ?>
-                                            </div>
-                                            <strong><?php echo htmlspecialchars($assignment['driver_name']); ?></strong>
-                                        </div>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($assignment['assigned_by_name'] ?? 'System'); ?></td>
-                                    <td><?php echo htmlspecialchars($assignment['notes'] ?? '-'); ?></td>
-                                    <td><span class="badge badge-success"><i class="fas fa-check-circle"></i> Active</span></td>
-                                    <td>
-                                        <button onclick="unassignVehicle(<?php echo $assignment['vehicle_id']; ?>, '<?php echo htmlspecialchars($assignment['vehicle_name'], ENT_QUOTES); ?>')" class="btn-small btn-delete" style="width: auto; padding: 8px 14px;">
-                                            <i class="fas fa-user-times"></i> Unassign
-                                        </button>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                    
-                    <!-- Summary Section -->
-                    <div style="margin-top: 30px; padding: 20px; background: var(--gray-50); border-radius: 16px; border: 2px solid var(--gray-200);">
-                        <h3 style="color: var(--gray-900); font-size: 18px; font-weight: 800; margin-bottom: 15px;">
-                            <i class="fas fa-chart-bar"></i> Assignment Summary
-                        </h3>
-                        <?php 
-                        // Group assignments by driver
-                        $driverAssignments = [];
-                        foreach ($assignments as $assignment) {
-                            if (!isset($driverAssignments[$assignment['driver_name']])) {
-                                $driverAssignments[$assignment['driver_name']] = [];
-                            }
-                            $driverAssignments[$assignment['driver_name']][] = $assignment['vehicle_name'] . ' (' . $assignment['number_plate'] . ')';
-                        }
-                        ?>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px;">
-                            <?php foreach ($driverAssignments as $driverName => $vehicles): ?>
-                                <div style="padding: 15px; background: white; border-radius: 12px; border: 2px solid var(--gray-200);">
-                                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                                        <div style="width: 40px; height: 40px; background: linear-gradient(135deg, var(--dark-red), var(--primary-red)); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px;">
-                                            <?php echo strtoupper(substr($driverName, 0, 1)); ?>
-                                        </div>
-                                        <div>
-                                            <div style="font-weight: 800; color: var(--gray-900);"><?php echo htmlspecialchars($driverName); ?></div>
-                                            <div style="font-size: 12px; color: var(--gray-600); font-weight: 600;">
-                                                <?php echo count($vehicles); ?> vehicle<?php echo count($vehicles) > 1 ? 's' : ''; ?> assigned
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div style="font-size: 13px; color: var(--gray-700); line-height: 1.6;">
-                                        <?php foreach ($vehicles as $vehicle): ?>
-                                            <div style="padding: 5px 0; border-top: 1px solid var(--gray-200); margin-top: 5px;">
-                                                <i class="fas fa-car" style="color: var(--primary-red); margin-right: 6px;"></i>
-                                                <?php echo htmlspecialchars($vehicle); ?>
-                                            </div>
-                                        <?php endforeach; ?>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
+            <section class="vm-stats">
+                <article class="vm-stat-tile">
+                    <div class="vm-stat-label">Total Vehicles</div>
+                    <div class="vm-stat-value"><?php echo number_format($totalVehicles); ?></div>
+                    <div class="vm-stat-caption">Current list after filters</div>
+                </article>
+                <article class="vm-stat-tile">
+                    <div class="vm-stat-label">Assigned</div>
+                    <div class="vm-stat-value"><?php echo number_format($assignedVehicles); ?></div>
+                    <div class="vm-stat-caption">Vehicles with an active driver</div>
+                </article>
+                <article class="vm-stat-tile">
+                    <div class="vm-stat-label">Unassigned</div>
+                    <div class="vm-stat-value"><?php echo number_format($unassignedVehicles); ?></div>
+                    <div class="vm-stat-caption">Ready to be assigned</div>
+                </article>
+            </section>
+
+            <section class="vm-panel">
+                <div class="vm-panel-head">
+                    <div>
+                        <h2>Vehicle Register</h2>
+                        <p>Compact table view for scanning vehicles, setup status, and assignments quickly.</p>
+                    </div>
+                </div>
+
+                <form method="get" class="vm-toolbar<?php echo $is_super_admin ? ' is-global' : ''; ?>">
+                    <div class="vm-search-field">
+                        <label for="searchInput">Search</label>
+                        <input
+                            type="text"
+                            id="searchInput"
+                            name="search"
+                            value="<?php echo htmlspecialchars($search); ?>"
+                            placeholder="Search by vehicle name or plate">
+                    </div>
+
+                    <div class="vm-filter-field">
+                        <label for="assignmentStatus">Assignment</label>
+                        <select id="assignmentStatus" name="assignment_status">
+                            <option value="">All Vehicles</option>
+                            <option value="assigned" <?php echo $assignmentStatus === 'assigned' ? 'selected' : ''; ?>>Assigned</option>
+                            <option value="unassigned" <?php echo $assignmentStatus === 'unassigned' ? 'selected' : ''; ?>>Unassigned</option>
+                        </select>
+                    </div>
+
+                    <div class="vm-filter-field">
+                        <label for="fuelTypeFilter">Fuel Type</label>
+                        <select id="fuelTypeFilter" name="fuel_type">
+                            <option value="">All Fuel Types</option>
+                            <option value="petrol" <?php echo $fuelTypeFilter === 'petrol' ? 'selected' : ''; ?>>Petrol</option>
+                            <option value="diesel" <?php echo $fuelTypeFilter === 'diesel' ? 'selected' : ''; ?>>Diesel</option>
+                            <option value="not_set" <?php echo $fuelTypeFilter === 'not_set' ? 'selected' : ''; ?>>Not Set</option>
+                        </select>
+                    </div>
+
+                    <?php if ($is_super_admin): ?>
+                        <div class="vm-filter-field">
+                            <label for="facilityFilter">Facility</label>
+                            <select id="facilityFilter" name="facility_id">
+                                <option value="">All Facilities</option>
+                                <?php foreach ($facilities as $facility): ?>
+                                    <option value="<?php echo (int) $facility['id']; ?>" <?php echo $facilityFilter === (int) $facility['id'] ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($facility['facility_name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
+                    <?php endif; ?>
+
+                    <div class="vm-filter-field">
+                        <label for="sortToken">Sort</label>
+                        <select id="sortToken" name="sort_token">
+                            <option value="vehicle_name_asc" <?php echo $sortToken === 'vehicle_name_asc' ? 'selected' : ''; ?>>Name A-Z</option>
+                            <option value="vehicle_name_desc" <?php echo $sortToken === 'vehicle_name_desc' ? 'selected' : ''; ?>>Name Z-A</option>
+                            <option value="number_plate_asc" <?php echo $sortToken === 'number_plate_asc' ? 'selected' : ''; ?>>Plate A-Z</option>
+                            <option value="number_plate_desc" <?php echo $sortToken === 'number_plate_desc' ? 'selected' : ''; ?>>Plate Z-A</option>
+                            <option value="created_at_desc" <?php echo $sortToken === 'created_at_desc' ? 'selected' : ''; ?>>Newest First</option>
+                            <option value="created_at_asc" <?php echo $sortToken === 'created_at_asc' ? 'selected' : ''; ?>>Oldest First</option>
+                        </select>
+                    </div>
+
+                    <div class="vm-toolbar-actions">
+                        <button type="submit" class="vm-btn vm-btn-primary">Apply</button>
+                        <a href="manage_vehicles.php" class="vm-btn vm-btn-ghost">Reset</a>
+                    </div>
+                </form>
+
+                <?php if (count($vehicles) > 0): ?>
+                    <div class="vm-table-wrap">
+                        <table class="vm-table">
+                            <thead>
+                                <tr>
+                                    <th>Vehicle</th>
+                                    <th>Plate</th>
+                                    <th>Fuel Type</th>
+                                    <th>Facility</th>
+                                    <th>Assigned Driver</th>
+                                    <th class="is-numeric">Mileage</th>
+                                    <th class="is-numeric">Card Balance</th>
+                                    <th>Status</th>
+                                    <th class="is-actions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($vehicles as $vehicle): ?>
+                                    <?php
+                                    $facilityName = $vehicle['facility_name'] ?: ($is_super_admin ? 'No Facility' : $facility_display);
+                                    $driverName = $vehicle['driver_name'] ?: 'Unassigned';
+                                    $assetTypeLabel = ucfirst((string) ($vehicle['asset_type'] ?: 'car'));
+                                    $rowStatusLabel = empty($vehicle['fuel_type'])
+                                        ? 'Needs Fuel Type'
+                                        : (!empty($vehicle['driver_name']) ? 'Assigned' : 'Unassigned');
+                                    $rowStatusClass = empty($vehicle['fuel_type'])
+                                        ? 'is-warning'
+                                        : (!empty($vehicle['driver_name']) ? 'is-positive' : 'is-pending');
+                                    ?>
+                                    <tr>
+                                        <td>
+                                            <div class="vm-vehicle-primary">
+                                                <div class="vm-vehicle-name"><?php echo htmlspecialchars($vehicle['vehicle_name']); ?></div>
+                                                <div class="vm-vehicle-meta"><?php echo htmlspecialchars($assetTypeLabel); ?></div>
+                                            </div>
+                                        </td>
+                                        <td><span class="vm-plate-chip"><?php echo htmlspecialchars($vehicle['number_plate']); ?></span></td>
+                                        <td>
+                                            <?php if ($vehicle['fuel_type']): ?>
+                                                <?php echo htmlspecialchars(ucfirst($vehicle['fuel_type'])); ?>
+                                            <?php else: ?>
+                                                <span class="vm-muted-text">Not set</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?php echo htmlspecialchars($facilityName); ?></td>
+                                        <td>
+                                            <span class="<?php echo $vehicle['driver_name'] ? 'vm-driver-name' : 'vm-muted-text'; ?>">
+                                                <?php echo htmlspecialchars($driverName); ?>
+                                            </span>
+                                        </td>
+                                        <td class="is-numeric"><?php echo number_format((int) round((float) $vehicle['current_mileage'])); ?> km</td>
+                                        <td class="is-numeric">K <?php echo number_format((float) $vehicle['float_balance'], 2); ?></td>
+                                        <td><span class="vm-status-chip <?php echo $rowStatusClass; ?>"><?php echo htmlspecialchars($rowStatusLabel); ?></span></td>
+                                        <td class="is-actions">
+                                            <details class="vm-row-menu">
+                                                <summary class="vm-menu-trigger" aria-label="Open vehicle actions">
+                                                    <span></span><span></span><span></span>
+                                                </summary>
+                                                <div class="vm-row-menu-popover">
+                                                    <button type="button" onclick='openViewModal(<?php echo json_encode($vehicle); ?>)'>View Details</button>
+                                                    <button type="button" onclick='openEditModal(<?php echo json_encode($vehicle); ?>)'>Edit Vehicle</button>
+                                                    <button type="button" onclick='openAssignModal(<?php echo json_encode($vehicle); ?>)'><?php echo $vehicle['driver_name'] ? 'Reassign Driver' : 'Assign Driver'; ?></button>
+                                                    <button type="button" class="danger" onclick="confirmDelete(<?php echo $vehicle['id']; ?>, '<?php echo htmlspecialchars($vehicle['vehicle_name'], ENT_QUOTES); ?>')">Delete Vehicle</button>
+                                                </div>
+                                            </details>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
                     </div>
                 <?php else: ?>
-                    <div class="empty-state">
-                        <i class="fas fa-user-times"></i>
-                        <h3>No Active Assignments</h3>
-                        <p>No vehicles are currently assigned to drivers.</p>
-                        <button onclick="switchTab('vehicles')" class="btn btn-primary">
-                            <i class="fas fa-arrow-left"></i> Go to Vehicles
-                        </button>
+                    <div class="vm-empty-state">
+                        <h3>No vehicles found</h3>
+                        <p><?php echo $search || $assignmentStatus || $fuelTypeFilter || $facilityFilter ? 'Try clearing a filter or changing the search term.' : 'Add the first vehicle to start building the fleet register.'; ?></p>
+                        <div class="vm-empty-actions">
+                            <?php if ($search || $assignmentStatus || $fuelTypeFilter || $facilityFilter): ?>
+                                <a href="manage_vehicles.php" class="vm-btn vm-btn-ghost">Clear Filters</a>
+                            <?php endif; ?>
+                            <button type="button" onclick="openAddModal()" class="vm-btn vm-btn-primary">Add Vehicle</button>
+                        </div>
                     </div>
                 <?php endif; ?>
-            </div>
+            </section>
+
+            <section class="vm-panel vm-panel-secondary">
+                <div class="vm-panel-head">
+                    <div>
+                        <h2>Active Assignments</h2>
+                        <p>Current driver-to-vehicle assignments. Use this section when you need to review or remove an active assignment.</p>
+                    </div>
+                </div>
+
+                <?php if (count($assignments) > 0): ?>
+                    <div class="vm-table-wrap">
+                        <table class="vm-table vm-table-secondary">
+                            <thead>
+                                <tr>
+                                    <th>Assigned Date</th>
+                                    <th>Vehicle</th>
+                                    <th>Plate</th>
+                                    <th>Driver</th>
+                                    <th>Assigned By</th>
+                                    <th>Notes</th>
+                                    <th>Status</th>
+                                    <th class="is-actions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($assignments as $assignment): ?>
+                                    <tr>
+                                        <td><?php echo date('d M Y', strtotime($assignment['assigned_date'])); ?></td>
+                                        <td><?php echo htmlspecialchars($assignment['vehicle_name']); ?></td>
+                                        <td><span class="vm-plate-chip"><?php echo htmlspecialchars($assignment['number_plate']); ?></span></td>
+                                        <td><?php echo htmlspecialchars($assignment['driver_name']); ?></td>
+                                        <td><?php echo htmlspecialchars($assignment['assigned_by_name'] ?? 'System'); ?></td>
+                                        <td><?php echo htmlspecialchars($assignment['notes'] ?: 'No notes'); ?></td>
+                                        <td><span class="vm-status-chip is-positive">Active</span></td>
+                                        <td class="is-actions">
+                                            <button type="button" class="vm-inline-danger" onclick="unassignVehicle(<?php echo $assignment['vehicle_id']; ?>, '<?php echo htmlspecialchars($assignment['vehicle_name'], ENT_QUOTES); ?>')">Unassign</button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php else: ?>
+                    <div class="vm-empty-state vm-empty-state-compact">
+                        <h3>No active assignments</h3>
+                        <p>Assign a driver from the vehicle list when you are ready.</p>
+                    </div>
+                <?php endif; ?>
+            </section>
         </div>
     </div>
 
+
     <!-- View Vehicle Details Modal -->
     <div class="modal" id="viewModal">
-        <div class="modal-content modal-content-large">
-            <div class="modal-header">
-                <h2 id="viewModalTitle"><i class="fas fa-car"></i> Vehicle Details</h2>
+        <div class="modal-content vm-modal-content vm-modal-content-view">
+            <div class="modal-header vm-modal-header">
+                <div>
+                    <div class="vm-modal-kicker">Vehicle Record</div>
+                    <h2 id="viewModalTitle">Vehicle Details</h2>
+                </div>
                 <button class="close-modal-btn" onclick="closeViewModal()">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
 
-            <div class="details-grid">
-                <div class="detail-card">
-                    <h4><i class="fas fa-car"></i> Vehicle Name</h4>
-                    <div class="value" id="viewVehicleName">-</div>
-                </div>
-                <div class="detail-card">
-                    <h4><i class="fas fa-id-card"></i> Number Plate</h4>
-                    <div class="value" id="viewNumberPlate">-</div>
-                </div>
-                <div class="detail-card">
-                    <h4><i class="fas fa-gas-pump"></i> Fuel Type</h4>
-                    <div class="value" id="viewFuelType">-</div>
-                </div>
+            <div class="vm-readonly-shell">
+                <section class="vm-readonly-hero">
+                    <div class="vm-readonly-identity">
+                        <div class="vm-readonly-kicker">Registered Vehicle</div>
+                        <h3 id="viewVehicleName">-</h3>
+                        <div class="vm-readonly-meta">
+                            <span class="vm-plate-chip" id="viewNumberPlate">-</span>
+                            <span class="vm-muted-pill" id="viewAssetType">Car</span>
+                            <span class="vm-muted-pill" id="viewFuelType">Not set</span>
+                        </div>
+                    </div>
+
+                    <div class="vm-readonly-stat-grid">
+                        <div class="vm-readonly-stat">
+                            <span class="vm-readonly-stat-label">Current Mileage</span>
+                            <strong id="viewMileage">0 km</strong>
+                        </div>
+                        <div class="vm-readonly-stat">
+                            <span class="vm-readonly-stat-label">Card Balance</span>
+                            <strong id="viewBalance">K 0.00</strong>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="vm-readonly-section">
+                    <div class="vm-readonly-section-head">
+                        <h3>Overview</h3>
+                        <p>Core assignment and registration details for this vehicle.</p>
+                    </div>
+                    <div class="vm-readonly-grid">
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Facility</span>
+                            <span class="vm-readonly-value" id="viewFacility">-</span>
+                        </div>
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Assigned Driver</span>
+                            <span class="vm-readonly-value" id="viewAssignedDriver">Unassigned</span>
+                        </div>
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Date Added</span>
+                            <span class="vm-readonly-value" id="viewDateAdded">-</span>
+                        </div>
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Card Account</span>
+                            <span class="vm-readonly-value" id="viewFloatAccount">-</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="vm-readonly-section">
+                    <div class="vm-readonly-section-head">
+                        <h3>Usage</h3>
+                        <p>Operational activity recorded against the vehicle.</p>
+                    </div>
+                    <div class="vm-readonly-grid">
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Total Trips</span>
+                            <span class="vm-readonly-value" id="viewTotalTrips">0</span>
+                        </div>
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Requisitions</span>
+                            <span class="vm-readonly-value" id="viewRequisitions">0</span>
+                        </div>
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Logbook Entries</span>
+                            <span class="vm-readonly-value" id="viewLogbook">0</span>
+                        </div>
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Current Mileage</span>
+                            <span class="vm-readonly-value" id="viewMileageDetail">0 km</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="vm-readonly-section">
+                    <div class="vm-readonly-section-head">
+                        <h3>Card &amp; Limits</h3>
+                        <p>Balance and configured spending threshold.</p>
+                    </div>
+                    <div class="vm-readonly-grid">
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Card Balance</span>
+                            <span class="vm-readonly-value" id="viewBalanceDetail">K 0.00</span>
+                        </div>
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Card Limit</span>
+                            <span class="vm-readonly-value" id="viewLimit">K 0.00</span>
+                        </div>
+                    </div>
+                </section>
             </div>
 
-            <div class="section-title">
-                <i class="fas fa-road"></i> Trip Statistics
-            </div>
-
-            <div class="details-grid">
-                <div class="detail-card highlight">
-                    <h4><i class="fas fa-route"></i> Total Trips</h4>
-                    <div class="value" id="viewTotalTrips">0</div>
-                </div>
-                <div class="detail-card">
-                    <h4><i class="fas fa-file-alt"></i> Requisitions</h4>
-                    <div class="value" id="viewRequisitions">0</div>
-                </div>
-                <div class="detail-card">
-                    <h4><i class="fas fa-book"></i> Logbook Entries</h4>
-                    <div class="value" id="viewLogbook">0</div>
-                </div>
-                <div class="detail-card highlight">
-                    <h4><i class="fas fa-tachometer-alt"></i> Current Mileage</h4>
-                    <div class="value" id="viewMileage">0 km</div>
-                </div>
-            </div>
-
-            <div class="section-title">
-                <i class="fas fa-wallet"></i> Float Account
-            </div>
-
-            <div class="details-grid">
-                <div class="detail-card highlight">
-                    <h4><i class="fas fa-money-bill-wave"></i> Current Balance</h4>
-                    <div class="value" id="viewBalance">K 0.00</div>
-                </div>
-                <div class="detail-card">
-                    <h4><i class="fas fa-chart-line"></i> Float Limit</h4>
-                    <div class="value" id="viewLimit">K 0.00</div>
-                </div>
-                <div class="detail-card">
-                    <h4><i class="fas fa-wallet"></i> Float Account Name</h4>
-                    <div class="value" style="font-size: 16px;" id="viewFloatAccount">-</div>
-                </div>
-                <div class="detail-card">
-                    <h4><i class="fas fa-calendar"></i> Date Added</h4>
-                    <div class="value" style="font-size: 16px;" id="viewDateAdded">-</div>
-                </div>
-            </div>
-
-            <div class="modal-actions">
-                <button type="button" class="btn-cancel" onclick="closeViewModal()">
-                    <i class="fas fa-times"></i> Close
-                </button>
+            <div class="vm-modal-actions">
+                <button type="button" class="btn-cancel" onclick="closeViewModal()">Close</button>
             </div>
         </div>
     </div>
 
     <!-- Add/Edit Vehicle Modal -->
     <div class="modal" id="vehicleModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="modalTitle"><i class="fas fa-car"></i> Add New Vehicle</h2>
+        <div class="modal-content vm-modal-content vm-modal-content-form">
+            <div class="modal-header vm-modal-header">
+                <div>
+                    <div class="vm-modal-kicker">Vehicle Record</div>
+                    <h2 id="modalTitle">Add Vehicle</h2>
+                </div>
                 <button class="close-modal-btn" onclick="closeModal()">
                     <i class="fas fa-times"></i>
                 </button>
@@ -1528,116 +1542,165 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
             <form method="POST" id="vehicleForm">
                 <input type="hidden" name="action" id="formAction" value="add">
                 <input type="hidden" name="vehicle_id" id="vehicleId">
-                
-                <div class="form-group">
-                    <label for="vehicleName">
-                        <i class="fas fa-car"></i> Vehicle Name <span style="color: var(--primary-red);">*</span>
-                    </label>
-                    <input 
-                        type="text" 
-                        id="vehicleName" 
-                        name="vehicle_name" 
-                        placeholder="e.g., Toyota Hilux, Ford Ranger"
-                        required>
+
+                <div class="vm-form-section">
+                    <div class="vm-form-section-head">
+                        <h3>Basic Information</h3>
+                        <p>Core identity for the vehicle record.</p>
+                    </div>
+                    <div class="vm-form-grid">
+                        <div class="vm-form-field">
+                            <label for="vehicleName">Vehicle Name</label>
+                            <input
+                                type="text"
+                                id="vehicleName"
+                                name="vehicle_name"
+                                placeholder="e.g. Toyota Hilux"
+                                required>
+                        </div>
+
+                        <div class="vm-form-field">
+                            <label for="numberPlate">Plate Number</label>
+                            <input
+                                type="text"
+                                id="numberPlate"
+                                name="number_plate"
+                                placeholder="e.g. ABC 123X"
+                                style="text-transform: uppercase;"
+                                required>
+                        </div>
+
+                        <div class="vm-form-field">
+                            <label for="assetType">Vehicle Type</label>
+                            <select id="assetType" name="asset_type" required>
+                                <option value="car">Car</option>
+                                <option value="motorcycle">Motorcycle</option>
+                            </select>
+                        </div>
+
+                        <div class="vm-form-field">
+                            <label for="fuelType">Fuel Type</label>
+                            <select id="fuelType" name="fuel_type" required>
+                                <option value="">Select Fuel Type</option>
+                                <option value="petrol">Petrol</option>
+                                <option value="diesel">Diesel</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="numberPlate">
-                        <i class="fas fa-id-card"></i> Number Plate <span style="color: var(--primary-red);">*</span>
-                    </label>
-                    <input 
-                        type="text" 
-                        id="numberPlate" 
-                        name="number_plate" 
-                        placeholder="e.g., ABC 123X"
-                        style="text-transform: uppercase;"
-                        required>
+                <div class="vm-form-section">
+                    <div class="vm-form-section-head">
+                        <h3>Assignment</h3>
+                        <p>Facility ownership and current driver context.</p>
+                    </div>
+                    <div class="vm-form-grid">
+                        <?php if ($is_super_admin): ?>
+                            <div class="vm-form-field" id="facilityGroup">
+                                <label for="facilitySelect">Facility</label>
+                                <select id="facilitySelect" name="facility_id" required>
+                                    <option value="">Select Facility</option>
+                                    <?php foreach ($facilities as $facility): ?>
+                                        <option value="<?php echo $facility['id']; ?>">
+                                            <?php echo htmlspecialchars($facility['facility_name']); ?> (<?php echo htmlspecialchars($facility['facility_code']); ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        <?php else: ?>
+                            <div class="vm-form-field">
+                                <label for="facilityDisplay">Facility</label>
+                                <input type="text" id="facilityDisplay" value="<?php echo htmlspecialchars($facility_display); ?>" readonly>
+                            </div>
+                        <?php endif; ?>
+
+                        <div class="vm-form-field">
+                            <label for="assignedDriverPreview">Assigned Driver</label>
+                            <input type="text" id="assignedDriverPreview" value="Assign after saving" readonly>
+                            <div class="vm-field-note">Driver assignment stays in the dedicated Assign action.</div>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="fuelType">
-                        <i class="fas fa-gas-pump"></i> Fuel Type
-                    </label>
-                    <select id="fuelType" name="fuel_type">
-                        <option value="">-- Select Fuel Type --</option>
-                        <option value="petrol">Petrol</option>
-                        <option value="diesel">Diesel</option>
-                    </select>
-                    <div class="form-hint">Used to validate fuel purchases and show the correct fuel type to drivers.</div>
+                <div class="vm-form-section">
+                    <div class="vm-form-section-head">
+                        <h3>Odometer &amp; Card</h3>
+                        <p>Starting values for mileage and card setup.</p>
+                    </div>
+                    <div class="vm-form-grid">
+                        <div class="vm-form-field" id="initialMileageGroup">
+                            <label for="initialMileage">Initial Mileage</label>
+                            <div class="vm-input-shell has-suffix">
+                                <input
+                                    type="number"
+                                    id="initialMileage"
+                                    name="initial_mileage"
+                                    placeholder="e.g. 12000"
+                                    step="1"
+                                    min="0"
+                                    value="0"
+                                    required>
+                                <span class="vm-input-affix is-suffix">km</span>
+                            </div>
+                        </div>
+
+                        <div class="vm-form-field vm-form-field-amount">
+                            <label for="floatLimit">Card Limit</label>
+                            <div class="vm-amount-stack">
+                                <div class="vm-input-shell has-prefix">
+                                    <span class="vm-input-affix is-prefix">K</span>
+                                    <input
+                                        type="number"
+                                        id="floatLimit"
+                                        class="vm-amount-input"
+                                        name="float_limit"
+                                        placeholder="10000"
+                                        inputmode="numeric"
+                                        step="1"
+                                        min="0"
+                                        value="10000"
+                                        required>
+                                </div>
+                                <div class="vm-quick-amounts" aria-label="Quick card limit amounts">
+                                    <button type="button" class="vm-quick-amount" onclick="adjustAmount('floatLimit', 1000)">+K 1,000</button>
+                                    <button type="button" class="vm-quick-amount" onclick="adjustAmount('floatLimit', 5000)">+K 5,000</button>
+                                    <button type="button" class="vm-quick-amount" onclick="adjustAmount('floatLimit', 10000)">+K 10,000</button>
+                                    <button type="button" class="vm-quick-amount" onclick="setAmount('floatLimit', 20000)">Set K 20,000</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="vm-form-field vm-form-field-amount" id="initialBalanceGroup">
+                            <label for="initialBalance">Opening Balance</label>
+                            <div class="vm-amount-stack">
+                                <div class="vm-input-shell has-prefix">
+                                    <span class="vm-input-affix is-prefix">K</span>
+                                    <input
+                                        type="number"
+                                        id="initialBalance"
+                                        class="vm-amount-input"
+                                        name="initial_balance"
+                                        placeholder="0"
+                                        inputmode="numeric"
+                                        step="1"
+                                        min="0"
+                                        value="0"
+                                        required>
+                                </div>
+                                <div class="vm-quick-amounts" aria-label="Quick opening balance amounts">
+                                    <button type="button" class="vm-quick-amount" onclick="adjustAmount('initialBalance', 1000)">+K 1,000</button>
+                                    <button type="button" class="vm-quick-amount" onclick="adjustAmount('initialBalance', 5000)">+K 5,000</button>
+                                    <button type="button" class="vm-quick-amount" onclick="adjustAmount('initialBalance', 10000)">+K 10,000</button>
+                                    <button type="button" class="vm-quick-amount" onclick="setAmount('initialBalance', 0)">Reset</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
-                <?php if ($is_super_admin): ?>
-                <div class="form-group" id="facilityGroup">
-                    <label for="facilitySelect">
-                        <i class="fas fa-building"></i> Assign to Facility
-                    </label>
-                    <select 
-                        id="facilitySelect" 
-                        name="facility_id">
-                        <option value="">-- No Facility (Unassigned) --</option>
-                        <?php foreach ($facilities as $facility): ?>
-                            <option value="<?php echo $facility['id']; ?>">
-                                <?php echo htmlspecialchars($facility['facility_name']); ?> 
-                                (<?php echo htmlspecialchars($facility['facility_code']); ?>)
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <div class="form-hint">Super admins can assign vehicles to specific facilities or leave unassigned</div>
-                </div>
-                <?php endif; ?>
-
-                <div class="form-group" id="initialMileageGroup">
-                    <label for="initialMileage">
-                        <i class="fas fa-tachometer-alt"></i> Initial Mileage (km)
-                    </label>
-                    <input 
-                        type="number" 
-                        id="initialMileage" 
-                        name="initial_mileage" 
-                        placeholder="0.00"
-                        step="0.01"
-                        min="0"
-                        value="0">
-                    <div class="form-hint">Starting odometer reading for this vehicle</div>
-                </div>
-
-                <div class="form-group">
-                    <label for="floatLimit">
-                        <i class="fas fa-chart-line"></i> Float Limit (K)
-                    </label>
-                    <input 
-                        type="number" 
-                        id="floatLimit" 
-                        name="float_limit" 
-                        placeholder="10000.00"
-                        step="0.01"
-                        min="0"
-                        value="10000.00">
-                    <div class="form-hint">Maximum float balance allowed</div>
-                </div>
-
-                <div class="form-group" id="initialBalanceGroup">
-                    <label for="initialBalance">
-                        <i class="fas fa-money-bill-wave"></i> Initial Balance (K)
-                    </label>
-                    <input 
-                        type="number" 
-                        id="initialBalance" 
-                        name="initial_balance" 
-                        placeholder="0.00"
-                        step="0.01"
-                        min="0"
-                        value="0">
-                    <div class="form-hint">Starting float balance (optional)</div>
-                </div>
-
-                <div class="modal-actions">
-                    <button type="button" class="btn-cancel" onclick="closeModal()">
-                        <i class="fas fa-times"></i> Cancel
-                    </button>
-                    <button type="submit" class="btn-submit">
-                        <i class="fas fa-save"></i> <span id="submitText">Add Vehicle</span>
-                    </button>
+                <div class="modal-actions vm-modal-actions">
+                    <button type="button" class="btn-cancel" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn-submit"><span id="submitText">Add Vehicle</span></button>
                 </div>
             </form>
         </div>
@@ -1732,35 +1795,37 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
     </div>
 
     <script>
-        // Tab switching
-        function switchTab(tabName) {
-            // Remove active from all tabs and content
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
-            // Add active to selected tab and content
-            event.target.classList.add('active');
-            document.getElementById(tabName + '-tab').classList.add('active');
-        }
-
         function openViewModal(vehicle) {
-            const totalTrips = vehicle.requisition_count + vehicle.logbook_count;
-            
+            const totalTrips = Number(vehicle.requisition_count || 0) + Number(vehicle.logbook_count || 0);
+            const formatCurrency = (value) => 'K ' + Number(value || 0).toFixed(2);
+            const formatWholeCurrency = (value) => 'K ' + Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+            const formatMileage = (value) => Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 0 }) + ' km';
+            const formatTitle = (value, fallback) => value ? value.charAt(0).toUpperCase() + value.slice(1) : fallback;
+            const createdAt = vehicle.created_at ? new Date(vehicle.created_at) : null;
+            const createdDateLabel = createdAt && !Number.isNaN(createdAt.getTime())
+                ? createdAt.toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric'
+                })
+                : '-';
+
             document.getElementById('viewVehicleName').textContent = vehicle.vehicle_name;
             document.getElementById('viewNumberPlate').textContent = vehicle.number_plate;
-            document.getElementById('viewFuelType').textContent = vehicle.fuel_type ? vehicle.fuel_type.charAt(0).toUpperCase() + vehicle.fuel_type.slice(1) : '-';
+            document.getElementById('viewAssetType').textContent = formatTitle(vehicle.asset_type, 'Car');
+            document.getElementById('viewFuelType').textContent = formatTitle(vehicle.fuel_type, 'Not set');
+            document.getElementById('viewFacility').textContent = vehicle.facility_name || 'No Facility';
+            document.getElementById('viewAssignedDriver').textContent = vehicle.driver_name || 'Unassigned';
             document.getElementById('viewTotalTrips').textContent = totalTrips;
             document.getElementById('viewRequisitions').textContent = vehicle.requisition_count;
             document.getElementById('viewLogbook').textContent = vehicle.logbook_count;
-            document.getElementById('viewMileage').textContent = parseFloat(vehicle.current_mileage).toFixed(2) + ' km';
-            document.getElementById('viewBalance').textContent = 'K ' + parseFloat(vehicle.float_balance).toFixed(2);
-            document.getElementById('viewLimit').textContent = 'K ' + parseFloat(vehicle.float_limit).toFixed(2);
+            document.getElementById('viewMileage').textContent = formatMileage(vehicle.current_mileage);
+            document.getElementById('viewMileageDetail').textContent = formatMileage(vehicle.current_mileage);
+            document.getElementById('viewBalance').textContent = formatCurrency(vehicle.float_balance);
+            document.getElementById('viewBalanceDetail').textContent = formatCurrency(vehicle.float_balance);
+            document.getElementById('viewLimit').textContent = formatWholeCurrency(vehicle.float_limit);
             document.getElementById('viewFloatAccount').textContent = vehicle.float_account_name || '-';
-            document.getElementById('viewDateAdded').textContent = new Date(vehicle.created_at).toLocaleDateString('en-US', { 
-                year: 'numeric', 
-                month: 'short', 
-                day: 'numeric' 
-            });
+            document.getElementById('viewDateAdded').textContent = createdDateLabel;
             
             document.getElementById('viewModal').classList.add('active');
         }
@@ -1770,14 +1835,20 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
         }
 
         function openAddModal() {
-            document.getElementById('modalTitle').innerHTML = '<i class="fas fa-plus-circle"></i> Add New Vehicle';
+            document.getElementById('modalTitle').textContent = 'Add Vehicle';
             document.getElementById('formAction').value = 'add';
             document.getElementById('submitText').textContent = 'Add Vehicle';
             document.getElementById('vehicleForm').reset();
-            document.getElementById('floatLimit').value = '10000.00';
+            document.getElementById('assetType').value = 'car';
+            document.getElementById('floatLimit').value = '10000';
             document.getElementById('initialBalance').value = '0';
             document.getElementById('initialMileage').value = '0';
             document.getElementById('fuelType').value = '';
+            document.getElementById('assignedDriverPreview').value = 'Assign after saving';
+            const facilitySelect = document.getElementById('facilitySelect');
+            if (facilitySelect) {
+                facilitySelect.value = '';
+            }
             
             document.getElementById('initialBalanceGroup').style.display = 'block';
             document.getElementById('initialMileageGroup').style.display = 'block';
@@ -1786,14 +1857,20 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
         }
 
         function openEditModal(vehicle) {
-            document.getElementById('modalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Vehicle';
+            document.getElementById('modalTitle').textContent = 'Edit Vehicle';
             document.getElementById('formAction').value = 'edit';
-            document.getElementById('submitText').textContent = 'Update Vehicle';
+            document.getElementById('submitText').textContent = 'Save Changes';
             document.getElementById('vehicleId').value = vehicle.id;
             document.getElementById('vehicleName').value = vehicle.vehicle_name;
             document.getElementById('numberPlate').value = vehicle.number_plate;
+            document.getElementById('assetType').value = vehicle.asset_type || 'car';
             document.getElementById('fuelType').value = vehicle.fuel_type || '';
-            document.getElementById('floatLimit').value = parseFloat(vehicle.float_limit).toFixed(2);
+            document.getElementById('floatLimit').value = Number(vehicle.float_limit || 0).toFixed(0);
+            document.getElementById('assignedDriverPreview').value = vehicle.driver_name || 'Not assigned';
+            const facilitySelect = document.getElementById('facilitySelect');
+            if (facilitySelect) {
+                facilitySelect.value = vehicle.facility_id || '';
+            }
             
             document.getElementById('initialBalanceGroup').style.display = 'none';
             document.getElementById('initialMileageGroup').style.display = 'none';
@@ -1815,6 +1892,28 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
             document.getElementById('assignModal').classList.remove('active');
         }
 
+        function adjustAmount(fieldId, amount) {
+            const field = document.getElementById(fieldId);
+            if (!field) {
+                return;
+            }
+
+            const currentValue = Number(field.value || 0);
+            const nextValue = Math.max(0, currentValue + Number(amount || 0));
+            field.value = nextValue.toFixed(0);
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        function setAmount(fieldId, amount) {
+            const field = document.getElementById(fieldId);
+            if (!field) {
+                return;
+            }
+
+            field.value = Math.max(0, Number(amount || 0)).toFixed(0);
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
         function confirmDelete(id, name) {
             document.getElementById('deleteVehicleName').textContent = name;
             document.getElementById('deleteVehicleId').value = id;
@@ -1831,35 +1930,6 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
             }
         }
 
-        function handleSearch(event) {
-            if (event.key === 'Enter' || event.type === 'click') {
-                const search = document.getElementById('searchInput').value;
-                const url = new URL(window.location.href);
-                if (search) {
-                    url.searchParams.set('search', search);
-                } else {
-                    url.searchParams.delete('search');
-                }
-                window.location.href = url.toString();
-            }
-        }
-
-        function clearSearch() {
-            const url = new URL(window.location.href);
-            url.searchParams.delete('search');
-            window.location.href = url.toString();
-        }
-
-        function handleSort(value) {
-            if (!value) return;
-            
-            const [sortBy, order] = value.split('_');
-            const url = new URL(window.location.href);
-            url.searchParams.set('sort', sortBy);
-            url.searchParams.set('order', order.toUpperCase());
-            window.location.href = url.toString();
-        }
-
         // Close modals when clicking outside
         document.querySelectorAll('.modal').forEach(modal => {
             modal.addEventListener('click', function(e) {
@@ -1872,7 +1942,7 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
         // Auto-hide alert after 5 seconds
         <?php if ($message): ?>
             setTimeout(() => {
-                const alert = document.querySelector('.alert');
+                const alert = document.querySelector('.vm-alert, .alert');
                 if (alert) {
                     alert.style.animation = 'slideDown 0.3s reverse';
                     setTimeout(() => alert.remove(), 300);

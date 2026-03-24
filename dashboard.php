@@ -36,9 +36,13 @@ try {
 // Build facility filter
 $facility_filter_sql = "";
 $facility_filter_params = [];
+$selected_facility_id = $is_super_admin ? (int) ($_GET['facility_id'] ?? 0) : (int) $user_facility_id;
 if (!$is_super_admin && $user_facility_id) {
     $facility_filter_sql = " AND u.facility_id = :facility_id";
     $facility_filter_params[':facility_id'] = $user_facility_id;
+} elseif ($is_super_admin && $selected_facility_id > 0) {
+    $facility_filter_sql = " AND u.facility_id = :facility_id";
+    $facility_filter_params[':facility_id'] = $selected_facility_id;
 }
 
 // Build staff-only filter (staff can only see their own entries)
@@ -92,7 +96,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status']) && $
         $stmt->execute([$req['requested_amount']]);
     }
     
-    header("Location: dashboard.php?account=" . urlencode($_GET['account'] ?? 'All') . "&view=" . urlencode($_GET['view'] ?? 'all'));
+    $redirectParams = [
+        'account' => $_GET['account'] ?? 'All',
+        'view' => $_GET['view'] ?? 'all',
+    ];
+    if ($is_super_admin && $selected_facility_id > 0) {
+        $redirectParams['facility_id'] = $selected_facility_id;
+    }
+    header("Location: dashboard.php?" . http_build_query($redirectParams));
     exit;
 }
 
@@ -142,11 +153,13 @@ $availableYears = $yearsStmt->fetchAll(PDO::FETCH_COLUMN);
 $accountsQuery = "SELECT float_account_name, float_balance FROM vehicles WHERE float_account_name IS NOT NULL";
 if (!$is_super_admin && $user_facility_id) {
     $accountsQuery .= " AND facility_id = :facility_id";
+} elseif ($is_super_admin && $selected_facility_id > 0) {
+    $accountsQuery .= " AND facility_id = :facility_id";
 }
 $accountsQuery .= " ORDER BY vehicle_name";
 $accountsStmt = $pdo->prepare($accountsQuery);
-if (!$is_super_admin && $user_facility_id) {
-    $accountsStmt->bindValue(':facility_id', $user_facility_id);
+if ((!$is_super_admin && $user_facility_id) || ($is_super_admin && $selected_facility_id > 0)) {
+    $accountsStmt->bindValue(':facility_id', $selected_facility_id);
 }
 $accountsStmt->execute();
 $floatAccounts = $accountsStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -162,10 +175,10 @@ if ($selectedAccount === 'All') {
     $displayFloat = $totalFloat;
 } else {
     $accountQuery = "SELECT float_balance FROM vehicles WHERE float_account_name = ?";
-    if (!$is_super_admin && $user_facility_id) {
+    if ((!$is_super_admin && $user_facility_id) || ($is_super_admin && $selected_facility_id > 0)) {
         $accountQuery .= " AND facility_id = ?";
         $accountStmt = $pdo->prepare($accountQuery);
-        $accountStmt->execute([$selectedAccount, $user_facility_id]);
+        $accountStmt->execute([$selectedAccount, $selected_facility_id]);
     } else {
         $accountStmt = $pdo->prepare($accountQuery);
         $accountStmt->execute([$selectedAccount]);
@@ -379,6 +392,9 @@ if ($viewMode === 'all' || $viewMode === 'logbook') {
     if (!$is_super_admin && $user_facility_id) {
         $logbook_facility_filter = " AND u.facility_id = :facility_id";
         $logbook_params[':facility_id'] = $user_facility_id;
+    } elseif ($is_super_admin && $selected_facility_id > 0) {
+        $logbook_facility_filter = " AND u.facility_id = :facility_id";
+        $logbook_params[':facility_id'] = $selected_facility_id;
     }
     
     // Build staff-only filter for logbook (check driver_id)
@@ -478,17 +494,25 @@ $buildPageUrl = function($page) {
 
 // Get facility name for display
 if ($is_super_admin) {
+    $facilitiesStmt = $pdo->query("SELECT id, facility_name FROM facilities WHERE is_active = 1 ORDER BY facility_name");
+    $facilities = $facilitiesStmt->fetchAll(PDO::FETCH_ASSOC);
     $facility_display = "All Facilities";
+    if ($selected_facility_id > 0) {
+        foreach ($facilities as $facility) {
+            if ((int) $facility['id'] === $selected_facility_id) {
+                $facility_display = $facility['facility_name'];
+                break;
+            }
+        }
+    }
 } else {
+    $facilities = [];
     $facility_query = "SELECT facility_name FROM facilities WHERE id = ?";
     $facility_stmt = $pdo->prepare($facility_query);
     $facility_stmt->execute([$user_facility_id]);
     $facility_row = $facility_stmt->fetch(PDO::FETCH_ASSOC);
     $facility_display = $facility_row ? $facility_row['facility_name'] : "Your Facility";
 }
-
-// Get user initials for avatar
-$user_initials = strtoupper(substr($user_name, 0, 2));
 ?>
 
 <!DOCTYPE html>
@@ -508,8 +532,8 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
-                <h2><i class="fas fa-gas-pump"></i><span>Fuel System</span></h2>
                 <button class="hamburger" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+                <h2><i class="fas fa-gas-pump"></i><span>Fuel System</span></h2>
             </div>
             <ul class="menu">
                 <li><a href="dashboard.php" class="active"><span class="menu-icon"><i class="fas fa-home"></i></span><span class="menu-text">Dashboard</span></a></li>
@@ -542,18 +566,11 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
         <!-- Main Content -->
         <main class="main-content">
             <div class="header">
-                <div>
-                    <h1>
-                        <i class="fas fa-tachometer-alt"></i> Dashboard Overview
-                        <span class="facility-badge <?php echo $is_super_admin ? 'super-admin' : ''; ?>">
-                            <i class="fas fa-<?php echo $is_super_admin ? 'crown' : 'building'; ?>"></i> 
-                            <?php echo htmlspecialchars($facility_display); ?>
-                        </span>
-                    </h1>
+                <div class="header-title-block">
+                    <h1>Dashboard Overview</h1>
                 </div>
                 <div class="user-header">
                     <div class="user-info-header">
-                        <div class="user-avatar-header"><?php echo $user_initials; ?></div>
                         <div class="user-details-header">
                             <div class="user-name-header"><?php echo htmlspecialchars($user_name); ?></div>
                             <div class="user-role-header"><?php echo ucwords(str_replace('_', ' ', $user_role)); ?></div>
@@ -567,16 +584,31 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
 
             <!-- Vehicle Float Account Selector -->
             <div class="account-selector">
-                <label for="accountSelect"><i class="fas fa-wallet"></i> Vehicle Float Account:</label>
-                <select id="accountSelect" onchange="changeAccount(this.value)">
-                    <option value="All" <?php echo $selectedAccount === 'All' ? 'selected' : ''; ?>>All Accounts</option>
-                    <?php foreach ($floatAccounts as $account): ?>
-                        <option value="<?php echo htmlspecialchars($account['float_account_name']); ?>" 
-                                <?php echo $selectedAccount === $account['float_account_name'] ? 'selected' : ''; ?>>
-                            <?php echo htmlspecialchars($account['float_account_name']); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
+                <?php if ($is_super_admin): ?>
+                <div class="selector-field">
+                    <label for="facilitySelect">Facility</label>
+                    <select id="facilitySelect" onchange="changeFacility(this.value)">
+                        <option value="0" <?php echo $selected_facility_id === 0 ? 'selected' : ''; ?>>All Facilities</option>
+                        <?php foreach ($facilities as $facility): ?>
+                            <option value="<?php echo (int) $facility['id']; ?>" <?php echo $selected_facility_id === (int) $facility['id'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($facility['facility_name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <?php endif; ?>
+                <div class="selector-field">
+                    <label for="accountSelect">Vehicle Float Account</label>
+                    <select id="accountSelect" onchange="changeAccount(this.value)">
+                        <option value="All" <?php echo $selectedAccount === 'All' ? 'selected' : ''; ?>>All Accounts</option>
+                        <?php foreach ($floatAccounts as $account): ?>
+                            <option value="<?php echo htmlspecialchars($account['float_account_name']); ?>" 
+                                    <?php echo $selectedAccount === $account['float_account_name'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($account['float_account_name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
             </div>
 
             <!-- Stats Cards -->
@@ -584,7 +616,7 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                 <div class="card">
                     <i class="fas fa-gas-pump card-icon"></i>
                     <h3><i class="fas fa-droplet"></i> Total Float Balance</h3>
-                    <div class="card-value">K <?php echo number_format($displayFloat, 2); ?></div>
+                    <div class="card-value">K <?php echo number_format($displayFloat, 0); ?></div>
                     <div class="card-subtitle"><?php echo htmlspecialchars($selectedAccount); ?></div>
                 </div>
                 <div class="card clickable" onclick="toggleCardFilter('approved')">
@@ -672,6 +704,9 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                                     <input type="hidden" name="view" value="<?php echo htmlspecialchars($viewMode); ?>">
                                     <input type="hidden" name="sort" value="<?php echo htmlspecialchars($sortBy); ?>">
                                     <input type="hidden" name="order" value="<?php echo htmlspecialchars($sortOrder); ?>">
+                                    <?php if ($is_super_admin && $selected_facility_id > 0): ?>
+                                    <input type="hidden" name="facility_id" value="<?php echo (int) $selected_facility_id; ?>">
+                                    <?php endif; ?>
                                     <input type="hidden" name="month" id="selectedMonth" value="<?php echo htmlspecialchars($filterMonth); ?>">
                                     <input type="hidden" name="year" id="selectedYear" value="<?php echo htmlspecialchars($filterYear); ?>">
                                     
@@ -802,7 +837,7 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                                 </div>
                                 <div class="detail-item">
                                     <span class="detail-label"><i class="fas fa-route"></i> Distance</span>
-                                    <span class="detail-value highlight-blue"><?php echo number_format($entry['total_kms'], 2); ?> KM</span>
+                                    <span class="detail-value highlight-blue"><?php echo number_format((int) round((float) $entry['total_kms'])); ?> KM</span>
                                 </div>
                                 <div class="detail-item">
                                     <span class="detail-label"><i class="fas fa-tasks"></i> Purpose</span>
@@ -934,6 +969,18 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
     </div>
 
     <script>
+        function changeFacility(facilityId) {
+            const url = new URL(window.location.href);
+            if (!facilityId || facilityId === '0') {
+                url.searchParams.delete('facility_id');
+            } else {
+                url.searchParams.set('facility_id', facilityId);
+            }
+            url.searchParams.set('account', 'All');
+            url.searchParams.set('page', '1');
+            window.location.href = url.toString();
+        }
+
         function changeAccount(account) {
             const url = new URL(window.location.href);
             url.searchParams.set('account', account);
@@ -1024,8 +1071,11 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
 
         function clearFilters() {
             const url = new URL(window.location.href);
-            const view = url.searchParams.get('view') || 'all';
-            window.location.href = 'dashboard.php?view=' + view;
+            ['status', 'staff', 'vehicle', 'month', 'year', 'amount', 'sort', 'order', 'page'].forEach((key) => {
+                url.searchParams.delete(key);
+            });
+            url.searchParams.set('view', url.searchParams.get('view') || 'all');
+            window.location.href = url.toString();
         }
 
         function openModal(data, canApprove) {
@@ -1092,7 +1142,7 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                     </div>
                     <div class="modal-info-item">
                         <div class="modal-info-label">Current Mileage</div>
-                        <div class="modal-info-value"><i class="fas fa-tachometer-alt"></i> ${data.mileage ? parseFloat(data.mileage).toFixed(1) + ' KM' : '-'}</div>
+                        <div class="modal-info-value"><i class="fas fa-tachometer-alt"></i> ${data.mileage ? Math.round(parseFloat(data.mileage)).toLocaleString('en-US') + ' KM' : '-'}</div>
                     </div>
                     <div class="modal-info-item">
                         <div class="modal-info-label">Filling Station</div>
@@ -1220,15 +1270,15 @@ $user_initials = strtoupper(substr($user_name, 0, 2));
                     </div>
                     <div class="modal-info-item">
                         <div class="modal-info-label">Start Mileage</div>
-                        <div class="modal-info-value"><i class="fas fa-tachometer-alt"></i> ${parseFloat(data.start_kms).toFixed(2)} KM</div>
+                        <div class="modal-info-value"><i class="fas fa-tachometer-alt"></i> ${Math.round(parseFloat(data.start_kms)).toLocaleString('en-US')} KM</div>
                     </div>
                     <div class="modal-info-item">
                         <div class="modal-info-label">End Mileage</div>
-                        <div class="modal-info-value"><i class="fas fa-tachometer-alt"></i> ${parseFloat(data.end_kms).toFixed(2)} KM</div>
+                        <div class="modal-info-value"><i class="fas fa-tachometer-alt"></i> ${Math.round(parseFloat(data.end_kms)).toLocaleString('en-US')} KM</div>
                     </div>
                     <div class="modal-info-item">
                         <div class="modal-info-label">Total Distance</div>
-                        <div class="modal-info-value" style="font-size: 18px; color: var(--primary-blue);"><i class="fas fa-route"></i> <strong>${parseFloat(data.total_kms).toFixed(2)} KM</strong></div>
+                        <div class="modal-info-value" style="font-size: 18px; color: var(--primary-blue);"><i class="fas fa-route"></i> <strong>${Math.round(parseFloat(data.total_kms)).toLocaleString('en-US')} KM</strong></div>
                     </div>
                     <div class="modal-info-item full-width">
                         <div class="modal-info-label">Purpose</div>

@@ -43,9 +43,18 @@ $user_role = $user['role'] ?? 'staff';
 // Handle form submission for new trip
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_trip'])) {
     try {
-        $total_kms = $_POST['end_kms'] - $_POST['start_kms'];
+        $startKmsRaw = trim((string) ($_POST['start_kms'] ?? ''));
+        $endKmsRaw = trim((string) ($_POST['end_kms'] ?? ''));
+
+        if (!preg_match('/^\d+$/', $startKmsRaw) || !preg_match('/^\d+$/', $endKmsRaw)) {
+            throw new Exception('Start KMs and End KMs must be whole numbers.');
+        }
+
+        $startKms = (int) $startKmsRaw;
+        $endKms = (int) $endKmsRaw;
+        $total_kms = $endKms - $startKms;
         
-        if ($total_kms < 0) {
+        if ($total_kms <= 0) {
             throw new Exception('End KMs must be greater than Start KMs');
         }
         
@@ -85,8 +94,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_trip'])) {
             $_POST['location_to'],
             $_POST['time_out'],
             $_POST['time_in'],
-            $_POST['start_kms'],
-            $_POST['end_kms'],
+            $startKms,
+            $endKms,
             $total_kms,
             $_POST['approver_id']
         ]);
@@ -896,14 +905,14 @@ if ($is_super_admin) {
                         <label class="form-label">
                             <i class="fas fa-tachometer-alt"></i> Start KMs <span class="required">*</span>
                         </label>
-                        <input type="number" name="start_kms" class="form-input" step="0.01" placeholder="0.00" required id="startKms" >
+                        <input type="number" name="start_kms" class="form-input" step="1" min="0" placeholder="e.g. 12000" required id="startKms" >
                     </div>
 
                     <div class="form-group">
                         <label class="form-label">
                             <i class="fas fa-tachometer-alt"></i> End KMs <span class="required">*</span>
                         </label>
-                        <input type="number" name="end_kms" class="form-input" step="0.01" placeholder="0.00" required id="endKms">
+                        <input type="number" name="end_kms" class="form-input" step="1" min="0" placeholder="e.g. 12005" required id="endKms">
                     </div>
 
                     <div class="form-group">
@@ -1003,15 +1012,15 @@ if ($is_super_admin) {
                             </div>
                             <div class="detail-item">
                                 <span class="detail-label"><i class="fas fa-tachometer-alt"></i> Start KMs</span>
-                                <span class="detail-value"><?php echo number_format($log['start_kms'], 2); ?> km</span>
+                                <span class="detail-value"><?php echo number_format((int) round((float) $log['start_kms'])); ?> km</span>
                             </div>
                             <div class="detail-item">
                                 <span class="detail-label"><i class="fas fa-tachometer-alt"></i> End KMs</span>
-                                <span class="detail-value"><?php echo number_format($log['end_kms'], 2); ?> km</span>
+                                <span class="detail-value"><?php echo number_format((int) round((float) $log['end_kms'])); ?> km</span>
                             </div>
                             <div class="detail-item">
                                 <span class="detail-label"><i class="fas fa-road"></i> Total KMs</span>
-                                <span class="detail-value highlight"><?php echo number_format($log['total_kms'], 2); ?> km</span>
+                                <span class="detail-value highlight"><?php echo number_format((int) round((float) $log['total_kms'])); ?> km</span>
                             </div>
                             <div class="detail-item">
                                 <span class="detail-label"><i class="fas fa-user-check"></i> Approver</span>
@@ -1049,7 +1058,7 @@ if ($is_super_admin) {
             const mileage = selectedOption.getAttribute('data-mileage');
             
             if (mileage) {
-                startKmsInput.value = parseFloat(mileage).toFixed(2);
+                startKmsInput.value = Math.round(parseFloat(mileage)).toString();
                 endKmsInput.value = ''; // Clear end kms when vehicle changes
             } else {
                 startKmsInput.value = '';
@@ -1059,10 +1068,10 @@ if ($is_super_admin) {
 
         // Validate that end_kms is greater than start_kms
         function validateKms() {
-            const startKms = parseFloat(startKmsInput.value) || 0;
-            const endKms = parseFloat(endKmsInput.value) || 0;
+            const startKms = parseInt(startKmsInput.value || '0', 10) || 0;
+            const endKms = parseInt(endKmsInput.value || '0', 10) || 0;
             
-            if (endKms < startKms) {
+            if (endKms <= startKms) {
                 endKmsInput.setCustomValidity('End KMs must be greater than Start KMs');
             } else {
                 endKmsInput.setCustomValidity('');

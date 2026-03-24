@@ -244,7 +244,7 @@ echo '<div class="detail-pair"><span class="detail-pair-label">Card Account</spa
 echo '<div class="detail-pair"><span class="detail-pair-label">Week Window</span><span class="detail-pair-value">' . fleet_h(date('d M', strtotime($weekStart)) . ' to ' . date('d M Y', strtotime($weekEnd))) . '</span></div>';
 echo '</div>';
 echo '<div class="metric-grid driver-key-metrics" style="margin-top:14px;">';
-echo '<div class="metric-card metric-card-featured"><div class="metric-label">Current Odometer</div><div class="metric-value">' . number_format($latestOdometer, 1) . '</div><div class="metric-caption">Kilometres</div></div>';
+echo '<div class="metric-card metric-card-featured"><div class="metric-label">Current Odometer</div><div class="metric-value">' . fleet_format_km($latestOdometer, false) . '</div><div class="metric-caption">Kilometres</div></div>';
 echo '<div class="metric-card metric-card-featured"><div class="metric-label">Fuel/Card Balance</div><div class="metric-value">' . $cardBalanceLabel . '</div><div class="metric-caption">' . fleet_h($cardBalanceNote) . '</div></div>';
 echo '</div>';
 echo '</div>';
@@ -257,7 +257,7 @@ echo '</div>';
 echo '<div class="week-badge"><i class="fas fa-calendar-week"></i><span>' . fleet_h($fullWeekLabel) . '</span></div>';
 echo '</div>';
 echo '<div class="metric-grid">';
-echo '<div class="metric-card"><div class="metric-label">Movements</div><div class="metric-value">' . number_format((int) $tripSummary['trip_count']) . '</div><div class="metric-caption">' . number_format((float) $tripSummary['total_km'], 1) . ' km</div></div>';
+echo '<div class="metric-card"><div class="metric-label">Movements</div><div class="metric-value">' . number_format((int) $tripSummary['trip_count']) . '</div><div class="metric-caption">' . fleet_format_km($tripSummary['total_km']) . '</div></div>';
 echo '<div class="metric-card"><div class="metric-label">Fuel Purchases</div><div class="metric-value">' . number_format((int) $fuelSummary['fuel_count']) . '</div><div class="metric-caption">' . number_format((float) $fuelSummary['total_litres'], 2) . ' litres</div></div>';
 echo '<div class="metric-card"><div class="metric-label">Fuel Spend</div><div class="metric-value">K ' . number_format((float) $fuelSummary['total_amount'], 2) . '</div><div class="metric-caption">Recorded spend</div></div>';
 echo '<div class="metric-card"><div class="metric-label">Missing Receipts</div><div class="metric-value">' . number_format((int) ($weekly['missing_receipts'] ?? 0)) . '</div><div class="metric-caption">' . (((int) ($weekly['missing_receipts'] ?? 0) > 0) ? 'Needs attention' : 'Up to date') . '</div></div>';
@@ -314,7 +314,7 @@ if (!$recentTrips) {
         $tripTimeLabel .= ' &middot; ' . fleet_h($trip['purpose']);
         $tripValue = ($trip['record_status'] === 'in_progress' || $trip['total_km'] === null)
             ? 'In progress'
-            : number_format((float) $trip['total_km'], 1) . ' km';
+            : fleet_format_km($trip['total_km']);
         echo '<div class="activity-row">';
         echo '<div class="activity-main">';
         echo '<p class="activity-title">' . fleet_h($trip['from_location']) . ' to ' . fleet_h($trip['to_location']) . '</p>';

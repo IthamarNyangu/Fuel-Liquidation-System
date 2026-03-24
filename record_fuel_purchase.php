@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
     $cardAccountId = (int) ($_POST['card_account_id'] ?? 0);
     $stationName = trim((string) ($_POST['station_name'] ?? ''));
     $receiptNumber = trim((string) ($_POST['receipt_number'] ?? ''));
-    $odometerAtRefill = (float) ($_POST['odometer_at_refill_km'] ?? 0);
+    $odometerAtRefillRaw = trim((string) ($_POST['odometer_at_refill_km'] ?? ''));
     $litres = (float) ($_POST['litres'] ?? 0);
     $amount = (float) ($_POST['amount'] ?? 0);
     $notes = trim((string) ($_POST['notes'] ?? ''));
@@ -57,9 +57,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
             throw new RuntimeException('Station name and receipt number are required.');
         }
 
+        if (!fleet_is_valid_km_input($odometerAtRefillRaw)) {
+            throw new RuntimeException('Refill odometer must be a whole number.');
+        }
+
         if ($litres <= 0 || $amount <= 0) {
             throw new RuntimeException('Litres and amount must both be greater than zero.');
         }
+
+        $odometerAtRefill = fleet_km_value($odometerAtRefillRaw);
 
         if (!isset($_FILES['receipt_attachment']) || $_FILES['receipt_attachment']['error'] === UPLOAD_ERR_NO_FILE) {
             throw new RuntimeException('A receipt attachment is required.');
@@ -80,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
 
         $latestKnown = fleet_get_latest_vehicle_odometer($pdo, (int) $selectedVehicle['id']);
         if ($odometerAtRefill < $latestKnown) {
-            throw new RuntimeException('Refill odometer cannot be lower than the last known vehicle reading of ' . number_format($latestKnown, 1) . ' km.');
+            throw new RuntimeException('Refill odometer cannot be lower than the last known vehicle reading of ' . fleet_format_km($latestKnown) . '.');
         }
 
         $selectedCard = null;
@@ -305,7 +311,7 @@ echo '</section>';
 
 echo '<section class="panel">';
 echo '<div class="panel-header-split">';
-echo '<div><h2>' . fleet_h($selectedVehicle['vehicle_name']) . ' · ' . fleet_h($selectedVehicle['number_plate']) . '</h2><p>Latest known odometer is ' . number_format($latestKnown, 1) . ' km. The refill odometer must not be below that value.</p></div>';
+echo '<div><h2>' . fleet_h($selectedVehicle['vehicle_name']) . ' &middot; ' . fleet_h($selectedVehicle['number_plate']) . '</h2><p>Latest known odometer is ' . fleet_format_km($latestKnown) . '. The refill odometer must not be below that value.</p></div>';
 if ($weekly) {
     echo '<span class="status-pill ' . fleet_h($weekly['status']) . '">' . fleet_h($weekly['status']) . '</span>';
 }
@@ -325,7 +331,7 @@ foreach ($cardAccounts as $account) {
     echo '<option value="' . fleet_h($account['id']) . '"' . $selected . '>' . fleet_h($account['account_name']) . ($account['fuel_type'] ? ' · ' . fleet_h($account['fuel_type']) : '') . '</option>';
 }
 echo '</select></div>';
-echo '<div class="form-group span-3"><label for="odometer_at_refill_km">Odometer at Refill</label><input id="odometer_at_refill_km" type="number" step="0.1" min="0" name="odometer_at_refill_km" value="' . fleet_h($_POST['odometer_at_refill_km'] ?? number_format($latestKnown, 1, '.', '')) . '" required></div>';
+echo '<div class="form-group span-3"><label for="odometer_at_refill_km">Odometer at Refill</label><input id="odometer_at_refill_km" type="number" step="1" min="0" name="odometer_at_refill_km" placeholder="e.g. 12000" value="' . fleet_h($_POST['odometer_at_refill_km'] ?? fleet_km_input_value($latestKnown)) . '" required></div>';
 echo '<div class="form-group span-6"><label for="station_name">Station</label><input id="station_name" type="text" name="station_name" value="' . fleet_h($_POST['station_name'] ?? '') . '" placeholder="Fuel station name" required></div>';
 echo '<div class="form-group span-6"><label for="receipt_number">Receipt Number</label><input id="receipt_number" type="text" name="receipt_number" value="' . fleet_h($_POST['receipt_number'] ?? '') . '" placeholder="Receipt or invoice number" required></div>';
 echo '<div class="form-group span-4"><label for="litres">Litres</label><input id="litres" type="number" step="0.01" min="0" name="litres" value="' . fleet_h($_POST['litres'] ?? '') . '" required></div>';
@@ -357,7 +363,7 @@ if (!$recentFuelPurchases) {
         echo '<div class="detail-pair"><span class="detail-pair-label">Litres</span><span class="detail-pair-value">' . number_format((float) $purchase['litres'], 2) . '</span></div>';
         echo '<div class="detail-pair"><span class="detail-pair-label">Amount</span><span class="detail-pair-value">K ' . number_format((float) $purchase['amount'], 2) . '</span></div>';
         echo '<div class="detail-pair"><span class="detail-pair-label">Unit Price</span><span class="detail-pair-value">K ' . number_format((float) $purchase['unit_price'], 2) . '</span></div>';
-        echo '<div class="detail-pair"><span class="detail-pair-label">Refill Odometer</span><span class="detail-pair-value">' . number_format((float) $purchase['odometer_at_refill_km'], 1) . '</span></div>';
+        echo '<div class="detail-pair"><span class="detail-pair-label">Refill Odometer</span><span class="detail-pair-value">' . fleet_format_km($purchase['odometer_at_refill_km']) . '</span></div>';
         echo '</div>';
         echo '<div class="button-row" style="margin-top:12px;">';
         if (!empty($purchase['receipt_attachment_id'])) {
@@ -384,3 +390,4 @@ echo 'updateUnitPricePreview();';
 echo '</script>';
 
 fleet_render_shell_end();
+

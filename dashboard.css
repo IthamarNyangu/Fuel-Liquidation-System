@@ -34,26 +34,6 @@
             min-height: 100vh;
         }
 
-        /* Facility Badge */
-        .facility-badge {
-            background: rgba(53, 98, 124, 0.14);
-            color: #35627c;
-            padding: 8px 16px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 700;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            border: 1px solid rgba(53, 98, 124, 0.22);
-        }
-
-        .facility-badge.super-admin {
-            background: linear-gradient(135deg, #29485d, #35627c);
-            color: white;
-            border-color: transparent;
-        }
-
         /* User Header Section */
         .user-header {
             display: flex;
@@ -65,21 +45,7 @@
         .user-info-header {
             display: flex;
             align-items: center;
-            gap: 10px;
-        }
-
-        .user-avatar-header {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--dark-red), var(--primary-red));
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 700;
-            font-size: 14px;
-            border: 1px solid rgba(53, 98, 124, 0.18);
+            gap: 0;
         }
 
         .user-details-header {
@@ -147,7 +113,8 @@
             backdrop-filter: blur(10px);
             display: flex;
             align-items: center;
-            justify-content: space-between;
+            justify-content: flex-start;
+            gap: 12px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         }
 
@@ -162,6 +129,14 @@
 
         .sidebar.collapsed .sidebar-header h2 span {
             display: none;
+        }
+
+        .sidebar.collapsed .sidebar-header h2 {
+            display: none;
+        }
+
+        .sidebar.collapsed .sidebar-header {
+            justify-content: center;
         }
 
         .hamburger {
@@ -278,9 +253,6 @@
             font-size: 32px;
             font-weight: 700;
             text-shadow: none;
-            display: flex;
-            align-items: center;
-            gap: 15px;
         }
 
         /* Account Selector Glass */
@@ -293,19 +265,24 @@
             border-radius: 20px;
             margin-bottom: 30px;
             display: flex;
-            align-items: center;
+            align-items: end;
+            flex-wrap: wrap;
             gap: 20px;
             box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
         }
 
+        .selector-field {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
         .account-selector label {
             font-weight: 700;
-            color: var(--gray-900);
-            font-size: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            text-shadow: none;
+            color: var(--gray-600);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
         }
 
         .account-selector select {
@@ -1242,6 +1219,16 @@
 
             .cards {
                 grid-template-columns: 1fr;
+            }
+
+            .account-selector {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .selector-field,
+            .account-selector select {
+                width: 100%;
             }
 
             .filter-dropdown {
