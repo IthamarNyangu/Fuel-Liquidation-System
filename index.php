@@ -42,6 +42,7 @@ try {
 
 // Check if we should show signup form (from URL hash)
 $show_signup = isset($_GET['signup']) || strpos($_SERVER['HTTP_REFERER'] ?? '', '#signup') !== false;
+$signup_active = $show_signup || !empty($signup_errors);
 ?>
 
 <!DOCTYPE html>
@@ -51,102 +52,42 @@ $show_signup = isset($_GET['signup']) || strpos($_SERVER['HTTP_REFERER'] ?? '', 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fuel Management System</title>
   <link rel="stylesheet" href="styles.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/styles.css')); ?>" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
-  <style>
-    .alert {
-      padding: 12px 20px;
-      margin-bottom: 20px;
-      border-radius: 4px;
-      font-size: 14px;
-    }
-    
-    .alert-success {
-      background-color: #d4edda;
-      color: #155724;
-      border: 1px solid #c3e6cb;
-    }
-    
-    .alert-error {
-      background-color: #f8d7da;
-      color: #721c24;
-      border: 1px solid #f5c6cb;
-    }
-    
-    .alert ul {
-      margin: 5px 0 0 20px;
-      padding: 0;
-    }
-    
-    .alert ul li {
-      margin: 3px 0;
-    }
-    
-    /* Form switching styles */
-    .form-container {
-      position: relative;
-      min-height: 400px;
-    }
-    
-    .form {
-      display: none;
-      width: 100%;
-    }
-    
-    .form.active {
-      display: block;
-    }
-    
-    .create-account {
-      margin-top: 20px;
-      text-align: center;
-      font-size: 14px;
-      color: #666;
-    }
-    
-    .create-account a {
-      color: #dc2626;
-      text-decoration: none;
-      font-weight: 600;
-    }
-    
-    .create-account a:hover {
-      text-decoration: underline;
-    }
-  </style>
 </head>
 <body>
-  <div class="container">
-    <div class="image-section">
-      <img src="assets/Logo-Full.svg" alt="Fuel system branding" />
-    </div>
-    <div class="login-section">
-      <div class="login-header">
-        <div class="system-title">
-          <i class="fas fa-gas-pump"></i>
-          <h1 class="system-name">Fuel Management System</h1>
+  <main class="auth-shell">
+    <section class="auth-frame">
+      <aside class="brand-panel" aria-hidden="true">
+        <div class="brand-badge">Right to Care Zambia</div>
+        <div class="brand-mark">
+          <img src="assets/Logo-Full.svg" alt="Right to Care" />
         </div>
-        <h2 class="login-title">Welcome</h2>
-      </div>
+        <div class="brand-copy">
+          <p class="brand-kicker">Fleet Operations</p>
+          <h1>Fuel Management System</h1>
+        </div>
+      </aside>
 
-      <div class="form-container">
+      <section class="login-panel">
+        <div class="login-panel-card">
+          <div class="form-container">
         <!-- Success Message -->
         <?php if (!empty($success_message)): ?>
-          <div class="alert alert-success">
+          <div class="alert alert-success" role="status">
             <?php echo htmlspecialchars($success_message); ?>
           </div>
         <?php endif; ?>
         
         <!-- Error Message -->
         <?php if (!empty($error_message)): ?>
-          <div class="alert alert-error">
+          <div class="alert alert-error" role="alert">
             <?php echo htmlspecialchars($error_message); ?>
           </div>
         <?php endif; ?>
 
         <!-- Login Form -->
-        <form id="login-form" class="form <?php echo !$show_signup && empty($signup_errors) ? 'active' : ''; ?>" action="login.php" method="POST">
+        <form id="login-form" class="form <?php echo !$signup_active ? 'active' : ''; ?>" action="login.php" method="POST">
           <?php if (!empty($login_errors)): ?>
-            <div class="alert alert-error">
+            <div class="alert alert-error" role="alert">
               <ul>
                 <?php foreach ($login_errors as $error): ?>
                   <li><?php echo htmlspecialchars($error); ?></li>
@@ -154,27 +95,45 @@ $show_signup = isset($_GET['signup']) || strpos($_SERVER['HTTP_REFERER'] ?? '', 
               </ul>
             </div>
           <?php endif; ?>
-          
+
+          <div class="login-header">
+            <h2 class="system-name">Sign In</h2>
+          </div>
+
           <div class="form-group">
-            <input type="text" id="username" name="username" placeholder="Username or Email" 
-                   value="<?php echo htmlspecialchars($old_username); ?>" required />
+            <label for="username">Username or Email</label>
+            <input
+              type="text"
+              id="username"
+              name="username"
+              placeholder="Enter your username or email"
+              value="<?php echo htmlspecialchars($old_username); ?>"
+              autocomplete="username"
+              required />
           </div>
           <div class="form-group">
-            <input type="password" id="password" name="password" placeholder="Password" required />
+            <label for="password">Password</label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              placeholder="Enter your password"
+              autocomplete="current-password"
+              required />
           </div>
-          <div class="forgot-password">
-            <a href="#">Forgot your password?</a>
+          <div class="form-assist">
+            Contact IT if you need help accessing your account.
           </div>
           <button type="submit" class="submit-btn">Sign In</button>
           <div class="create-account">
-            Don't have an account? <a href="#" id="signup-link">Sign Up</a>
+            Don't have an account? <button type="button" class="inline-link" id="signup-link">Create one</button>
           </div>
         </form>
 
         <!-- Signup Form -->
-        <form id="signup-form" class="form <?php echo $show_signup || !empty($signup_errors) ? 'active' : ''; ?>" action="signup.php" method="POST">
+        <form id="signup-form" class="form signup-form <?php echo $signup_active ? 'active' : ''; ?>" action="signup.php" method="POST">
           <?php if (!empty($signup_errors)): ?>
-            <div class="alert alert-error">
+            <div class="alert alert-error" role="alert">
               <ul>
                 <?php foreach ($signup_errors as $error): ?>
                   <li><?php echo htmlspecialchars($error); ?></li>
@@ -182,85 +141,75 @@ $show_signup = isset($_GET['signup']) || strpos($_SERVER['HTTP_REFERER'] ?? '', 
               </ul>
             </div>
           <?php endif; ?>
-          
-          <div class="form-group">
-            <input type="text" id="new-username" name="new-username" placeholder="Username" 
-                   value="<?php echo htmlspecialchars($old_username); ?>" required />
+
+          <div class="form-heading">
+            <h3>Create Account</h3>
+            <p>Use your Right to Care email and select your facility.</p>
           </div>
-          <div class="form-group">
-            <input type="email" id="email" name="email" placeholder="Email (@righttocare-zambia.org)" 
-                   value="<?php echo htmlspecialchars($old_email); ?>" required />
-            <small style="display: block; margin-top: 5px; color: #666; font-size: 12px;">
-              Only @righttocare-zambia.org emails are allowed
-            </small>
-          </div>
-          
-          <div class="form-group">
-            <select id="facility_id" name="facility_id" required style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
-              <option value="">Select Your Facility *</option>
-              <?php foreach ($facilities as $facility): ?>
-                <option value="<?php echo $facility['id']; ?>" <?php echo ($old_facility_id == $facility['id']) ? 'selected' : ''; ?>>
-                  <?php echo htmlspecialchars($facility['facility_name']); ?>
-                  <?php if ($facility['facility_code']): ?>
-                    (<?php echo htmlspecialchars($facility['facility_code']); ?>)
-                  <?php endif; ?>
-                </option>
-              <?php endforeach; ?>
-            </select>
-            <small style="display: block; margin-top: 5px; color: #666; font-size: 12px;">
-              Select the facility where you work
-            </small>
-          </div>
-          
-          <div class="form-group">
-            <input type="password" id="new-password" name="new-password" placeholder="Password (min. 6 characters)" required />
+          <div class="signup-grid">
+            <div class="form-group">
+              <label for="new-username">Username</label>
+              <input
+                type="text"
+                id="new-username"
+                name="new-username"
+                placeholder="Choose a username"
+                value="<?php echo htmlspecialchars($old_username); ?>"
+                autocomplete="username"
+                required />
+            </div>
+            <div class="form-group">
+              <label for="email">Work Email</label>
+              <input
+                type="email"
+                id="email"
+                name="email"
+                placeholder="name@righttocare-zambia.org"
+                value="<?php echo htmlspecialchars($old_email); ?>"
+                autocomplete="email"
+                required />
+            </div>
+            
+            <div class="form-group">
+              <label for="facility_id">Facility</label>
+              <select id="facility_id" name="facility_id" required>
+                <option value="">Select Your Facility *</option>
+                <?php foreach ($facilities as $facility): ?>
+                  <option value="<?php echo $facility['id']; ?>" <?php echo ($old_facility_id == $facility['id']) ? 'selected' : ''; ?>>
+                    <?php echo htmlspecialchars($facility['facility_name']); ?>
+                    <?php if ($facility['facility_code']): ?>
+                      (<?php echo htmlspecialchars($facility['facility_code']); ?>)
+                    <?php endif; ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+              <small class="field-hint">
+                Select the facility where you work
+              </small>
+            </div>
+            
+            <div class="form-group">
+              <label for="new-password">Password</label>
+              <input
+                type="password"
+                id="new-password"
+                name="new-password"
+                placeholder="Minimum 6 characters"
+                autocomplete="new-password"
+                required />
+            </div>
           </div>
           <button type="submit" class="submit-btn">Sign Up</button>
           <div class="create-account">
-            Already have an account? <a href="#" id="login-link">Sign In</a>
+            Already have an account? <button type="button" class="inline-link" id="login-link">Sign in</button>
           </div>
         </form>
-      </div>
-    </div>
-  </div>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
 
   <script src="script.js"></script>
-  <script>
-    // Form switching functionality
-    document.addEventListener('DOMContentLoaded', function() {
-      const loginForm = document.getElementById('login-form');
-      const signupForm = document.getElementById('signup-form');
-      const signupLink = document.getElementById('signup-link');
-      const loginLink = document.getElementById('login-link');
-      
-      // Switch to signup form
-      if (signupLink) {
-        signupLink.addEventListener('click', function(e) {
-          e.preventDefault();
-          loginForm.classList.remove('active');
-          signupForm.classList.add('active');
-          // Update URL hash
-          window.location.hash = 'signup';
-        });
-      }
-      
-      // Switch to login form
-      if (loginLink) {
-        loginLink.addEventListener('click', function(e) {
-          e.preventDefault();
-          signupForm.classList.remove('active');
-          loginForm.classList.add('active');
-          // Clear URL hash
-          window.location.hash = '';
-        });
-      }
-      
-      // Check URL hash on page load
-      if (window.location.hash === '#signup') {
-        loginForm.classList.remove('active');
-        signupForm.classList.add('active');
-      }
-    });
-  </script>
 </body>
 </html>
