@@ -1,331 +1,713 @@
 <?php
 require_once 'db_config.php';
 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+function fuel_h($value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+}
+
+function fuel_normalize_type(?string $value, string $fallback = 'petrol'): string
+{
+    $value = strtolower(trim((string) $value));
+    return in_array($value, ['petrol', 'diesel'], true) ? $value : $fallback;
+}
+
+function fuel_source_options(): array
+{
+    return [
+        'erb_revised_pump_prices' => 'ERB Revised Pump Prices',
+        'manual_correction' => 'Manual Correction',
+        'internal_adjustment' => 'Internal Adjustment',
+        'other' => 'Other',
+    ];
+}
+
+function fuel_source_label(string $value): string
+{
+    $options = fuel_source_options();
+    return $options[$value] ?? 'Other';
+}
+
+function fuel_is_valid_date(?string $value, string $format): bool
+{
+    if ($value === null || $value === '') {
+        return false;
+    }
+
+    $date = DateTime::createFromFormat($format, $value);
+    return $date instanceof DateTime && $date->format($format) === $value;
+}
+
+function fuel_format_price(float $amount): string
+{
+    return 'K ' . number_format($amount, 2);
+}
+
+function fuel_format_price_input(float $amount): string
+{
+    return number_format($amount, 2, '.', '');
+}
+
+function fuel_format_price_per_liter(float $amount): string
+{
+    return fuel_format_price($amount) . '/L';
+}
+
+function fuel_format_date_label(?string $value, string $fallback = '--'): string
+{
+    if ($value === null || trim($value) === '') {
+        return $fallback;
+    }
+
+    $timestamp = strtotime($value);
+    if ($timestamp === false) {
+        return $fallback;
+    }
+
+    return date('d M Y', $timestamp);
+}
+
+function fuel_format_datetime_label(?string $value, string $fallback = '--'): string
+{
+    if ($value === null || trim($value) === '') {
+        return $fallback;
+    }
+
+    $timestamp = strtotime($value);
+    if ($timestamp === false) {
+        return $fallback;
+    }
+
+    return date('d M Y, h:i A', $timestamp);
+}
+
+function fuel_format_reference_month(?string $value, string $fallback = '--'): string
+{
+    if ($value === null || trim($value) === '') {
+        return $fallback;
+    }
+
+    $month = DateTime::createFromFormat('Y-m', $value);
+    if ($month instanceof DateTime && $month->format('Y-m') === $value) {
+        return $month->format('M Y');
+    }
+
+    $timestamp = strtotime($value);
+    if ($timestamp === false) {
+        return $fallback;
+    }
+
+    return date('M Y', $timestamp);
+}
+
+function fuel_current_user_label(PDO $pdo): string
+{
+    if (!empty($_SESSION['user_id'])) {
+        try {
+            $stmt = $pdo->prepare('SELECT name FROM users WHERE id = ? LIMIT 1');
+            $stmt->execute([$_SESSION['user_id']]);
+            $name = $stmt->fetchColumn();
+            if ($name) {
+                return (string) $name;
+            }
+        } catch (Throwable $exception) {
+        }
+    }
+
+    if (!empty($_SESSION['user_email'])) {
+        return (string) $_SESSION['user_email'];
+    }
+
+    if (!empty($_SESSION['user_role'])) {
+        return ucwords(str_replace('_', ' ', (string) $_SESSION['user_role']));
+    }
+
+    return 'Admin';
+}
+
+function fuel_build_reason(string $sourceType, string $effectiveDate, string $referenceMonth, string $notes): string
+{
+    $parts = [
+        'Source Type: ' . fuel_source_label($sourceType),
+        'Effective Date: ' . $effectiveDate,
+    ];
+
+    if ($referenceMonth !== '') {
+        $parts[] = 'Reference Month: ' . $referenceMonth;
+    }
+
+    if ($notes !== '') {
+        $parts[] = 'Notes: ' . $notes;
+    }
+
+    return implode("\n", $parts);
+}
+
+function fuel_parse_history_reason(string $reason, string $createdAt = ''): array
+{
+    $meta = [
+        'effective_date' => $createdAt !== '' ? date('Y-m-d', strtotime($createdAt)) : '',
+        'source' => 'Legacy entry',
+        'reference_month' => '',
+        'notes' => trim($reason),
+    ];
+
+    if (trim($reason) === '') {
+        return $meta;
+    }
+
+    $recognized = 0;
+    $lines = preg_split('/\r\n|\r|\n/', $reason) ?: [];
+
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+
+        if (stripos($line, 'Source Type:') === 0) {
+            $meta['source'] = trim(substr($line, strlen('Source Type:')));
+            $recognized++;
+            continue;
+        }
+
+        if (stripos($line, 'Effective Date:') === 0) {
+            $meta['effective_date'] = trim(substr($line, strlen('Effective Date:')));
+            $recognized++;
+            continue;
+        }
+
+        if (stripos($line, 'Reference Month:') === 0) {
+            $meta['reference_month'] = trim(substr($line, strlen('Reference Month:')));
+            $recognized++;
+            continue;
+        }
+
+        if (stripos($line, 'Notes:') === 0) {
+            $meta['notes'] = trim(substr($line, strlen('Notes:')));
+            $recognized++;
+            continue;
+        }
+    }
+
+    if ($recognized > 0 && $meta['notes'] === '') {
+        $meta['notes'] = 'No additional notes';
+    }
+
+    return $meta;
+}
+
 $message = '';
 $messageType = '';
+$sourceOptions = fuel_source_options();
+$historyFilter = strtolower(trim((string) ($_GET['history_filter'] ?? 'all')));
+if (!in_array($historyFilter, ['all', 'petrol', 'diesel'], true)) {
+    $historyFilter = 'all';
+}
+
+$settingsStmt = $pdo->query('SELECT * FROM settings WHERE id = 1');
+$settings = $settingsStmt->fetch(PDO::FETCH_ASSOC) ?: [
+    'petrol_price' => 0,
+    'diesel_price' => 0,
+    'updated_at' => date('Y-m-d H:i:s'),
+];
+
+$defaultFuelType = $historyFilter !== 'all' ? $historyFilter : 'petrol';
+$formData = [
+    'fuel_type' => fuel_normalize_type($_POST['fuel_type'] ?? $defaultFuelType, $defaultFuelType),
+    'fuel_price' => trim((string) ($_POST['fuel_price'] ?? '')),
+    'effective_date' => trim((string) ($_POST['effective_date'] ?? date('Y-m-d'))),
+    'source_type' => trim((string) ($_POST['source_type'] ?? 'erb_revised_pump_prices')),
+    'reference_month' => trim((string) ($_POST['reference_month'] ?? date('Y-m'))),
+    'notes' => trim((string) ($_POST['notes'] ?? '')),
+];
+
+if (!array_key_exists($formData['source_type'], $sourceOptions)) {
+    $formData['source_type'] = 'erb_revised_pump_prices';
+}
+
+if ($formData['fuel_price'] === '') {
+    $currentSelectedPrice = $formData['fuel_type'] === 'diesel'
+        ? (float) ($settings['diesel_price'] ?? 0)
+        : (float) ($settings['petrol_price'] ?? 0);
+    $formData['fuel_price'] = fuel_format_price_input($currentSelectedPrice);
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_price'])) {
+    $fuelType = $formData['fuel_type'];
+    $priceInput = $formData['fuel_price'];
+    $effectiveDate = $formData['effective_date'];
+    $sourceType = $formData['source_type'];
+    $referenceMonth = $formData['source_type'] === 'erb_revised_pump_prices' ? $formData['reference_month'] : '';
+    $notes = preg_replace('/\s+/', ' ', $formData['notes'] ?? '');
+    $formData['notes'] = trim((string) $notes);
+    $changedBy = fuel_current_user_label($pdo);
 
-    $fuel_type = $_POST['fuel_type']; // petrol or diesel
-    $new_price = floatval($_POST['fuel_price']);
-    $reason = trim($_POST['reason']);
-    $changed_by = 'Admin';
-
-    if (!in_array($fuel_type, ['petrol', 'diesel'])) {
-        $message = 'Invalid fuel type selected!';
+    if (!in_array($fuelType, ['petrol', 'diesel'], true)) {
+        $message = 'Select Petrol or Diesel before saving the price update.';
         $messageType = 'error';
-    } elseif (empty($reason)) {
-        $message = 'Reason for price change is mandatory!';
+    } elseif ($priceInput === '' || !is_numeric($priceInput)) {
+        $message = 'Enter the new price in ZMW per litre.';
         $messageType = 'error';
-    } elseif ($new_price <= 0) {
-        $message = 'Fuel price must be greater than zero!';
+    } elseif (!fuel_is_valid_date($effectiveDate, 'Y-m-d')) {
+        $message = 'Choose a valid effective date.';
+        $messageType = 'error';
+    } elseif (!array_key_exists($sourceType, $sourceOptions)) {
+        $message = 'Choose a valid source type.';
+        $messageType = 'error';
+    } elseif ($sourceType === 'erb_revised_pump_prices' && !fuel_is_valid_date($referenceMonth, 'Y-m')) {
+        $message = 'Reference month is required for ERB pump price updates.';
         $messageType = 'error';
     } else {
+        $newPrice = round((float) $priceInput, 2);
+        $column = $fuelType === 'petrol' ? 'petrol_price' : 'diesel_price';
+        $oldPrice = round((float) ($settings[$column] ?? 0), 2);
 
-        // Determine column
-        $column = $fuel_type === 'petrol' ? 'petrol_price' : 'diesel_price';
-
-        // Get current price
-        $stmt = $pdo->query("SELECT $column FROM settings WHERE id = 1");
-        $current = $stmt->fetch(PDO::FETCH_ASSOC);
-        $old_price = floatval($current[$column]);
-
-        if (round($old_price, 2) == round($new_price, 2)) {
-            $message = 'New price is the same as current price!';
+        if ($newPrice <= 0) {
+            $message = 'Fuel price must be greater than zero.';
+            $messageType = 'error';
+        } elseif ($newPrice === $oldPrice) {
+            $message = 'The new price matches the current price. Enter a different value to save a change.';
             $messageType = 'error';
         } else {
+            try {
+                $pdo->beginTransaction();
 
-            // Update selected fuel price
-            $stmt = $pdo->prepare("UPDATE settings SET $column = ?, updated_at = NOW() WHERE id = 1");
-            $stmt->execute([$new_price]);
+                $updateStmt = $pdo->prepare("UPDATE settings SET $column = ?, updated_at = NOW() WHERE id = 1");
+                $updateStmt->execute([$newPrice]);
 
-            // Log history
-            $stmt = $pdo->prepare("
-                INSERT INTO fuel_price_history 
-                (fuel_type, old_price, new_price, reason, changed_by) 
-                VALUES (?, ?, ?, ?, ?)
-            ");
-            $stmt->execute([$fuel_type, $old_price, $new_price, $reason, $changed_by]);
+                $historyReason = fuel_build_reason($sourceType, $effectiveDate, $referenceMonth, $formData['notes']);
+                $historyStmt = $pdo->prepare('
+                    INSERT INTO fuel_price_history (fuel_type, old_price, new_price, reason, changed_by)
+                    VALUES (?, ?, ?, ?, ?)
+                ');
+                $historyStmt->execute([$fuelType, $oldPrice, $newPrice, $historyReason, $changedBy]);
 
-            $message = ucfirst($fuel_type) . " price updated successfully!";
-            $messageType = 'success';
+                $pdo->commit();
+
+                $message = ucfirst($fuelType) . ' price updated successfully.';
+                $messageType = 'success';
+
+                $settingsStmt = $pdo->query('SELECT * FROM settings WHERE id = 1');
+                $settings = $settingsStmt->fetch(PDO::FETCH_ASSOC) ?: $settings;
+
+                $updatedSelectedPrice = $fuelType === 'diesel'
+                    ? (float) ($settings['diesel_price'] ?? 0)
+                    : (float) ($settings['petrol_price'] ?? 0);
+                $formData['fuel_price'] = fuel_format_price_input($updatedSelectedPrice);
+                $formData['notes'] = '';
+                $formData['reference_month'] = date('Y-m');
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+
+                $message = 'The fuel price could not be updated right now. Please try again.';
+                $messageType = 'error';
+            }
         }
     }
 }
 
-// Fetch settings
-$stmt = $pdo->query("SELECT * FROM settings WHERE id = 1");
-$settings = $stmt->fetch(PDO::FETCH_ASSOC);
+$historySql = 'SELECT * FROM fuel_price_history';
+$historyParams = [];
+if ($historyFilter !== 'all') {
+    $historySql .= ' WHERE fuel_type = ?';
+    $historyParams[] = $historyFilter;
+}
+$historySql .= ' ORDER BY created_at DESC LIMIT 40';
+$historyStmt = $pdo->prepare($historySql);
+$historyStmt->execute($historyParams);
+$priceHistory = $historyStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Fetch history
-$stmt = $pdo->query("SELECT * FROM fuel_price_history ORDER BY created_at DESC LIMIT 20");
-$priceHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$selectedCurrentPrice = (float) ($formData['fuel_type'] === 'diesel' ? ($settings['diesel_price'] ?? 0) : ($settings['petrol_price'] ?? 0));
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fuel Price Settings</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-     <link rel="stylesheet" type="text/css" href="fuelset.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/fuelset.css')); ?>">
-    <style>
-        
-    </style>
+    <link rel="stylesheet" type="text/css" href="fuelset.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/fuelset.css')); ?>">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="header-content">
-                <h1><i class="fas fa-cog"></i> Fuel Price Settings</h1>
-                <a href="dashboard.php" class="back-btn">
-                    <i class="fas fa-arrow-left"></i> Back to Dashboard
-                </a>
+    <div class="fps-page">
+        <header class="fps-header">
+            <a href="dashboard.php" class="fps-back-link">&larr; Back to Dashboard</a>
+            <div class="fps-header-copy">
+                <h1>Fuel Price Settings</h1>
+                <p>Manage monthly pump prices for Petrol and Diesel.</p>
             </div>
-        </div>
+        </header>
 
-        <!-- Alert Message -->
-        <?php if ($message): ?>
-            <div class="alert alert-<?php echo $messageType; ?>">
-                <i class="fas fa-<?php echo $messageType === 'success' ? 'check-circle' : 'exclamation-circle'; ?>"></i>
-                <?php echo htmlspecialchars($message); ?>
+        <?php if ($message !== ''): ?>
+            <div class="fps-alert fps-alert-<?php echo fuel_h($messageType); ?>" role="status">
+                <?php echo fuel_h($message); ?>
             </div>
         <?php endif; ?>
 
-        <!-- Info Cards price card updated -->
-        <div class="info-grid">
-            <div class="info-card">
-                <h3>Petrol Price</h3>
-                <div class="info-value">K <?php echo number_format($settings['petrol_price'], 2); ?></div>
-                </div>
+        <section class="fps-summary-grid" aria-label="Current fuel prices">
+            <article class="fps-summary-card">
+                <span class="fps-summary-label">Petrol Current Price</span>
+                <strong class="fps-summary-value"><?php echo fuel_h(fuel_format_price_per_liter((float) ($settings['petrol_price'] ?? 0))); ?></strong>
+                <span class="fps-summary-meta">Current active pump price</span>
+            </article>
+            <article class="fps-summary-card">
+                <span class="fps-summary-label">Diesel Current Price</span>
+                <strong class="fps-summary-value"><?php echo fuel_h(fuel_format_price_per_liter((float) ($settings['diesel_price'] ?? 0))); ?></strong>
+                <span class="fps-summary-meta">Current active pump price</span>
+            </article>
+            <article class="fps-summary-card">
+                <span class="fps-summary-label">Last Updated</span>
+                <strong class="fps-summary-value fps-summary-value-small"><?php echo fuel_h(fuel_format_datetime_label($settings['updated_at'] ?? null)); ?></strong>
+                <span class="fps-summary-meta">Settings record last change</span>
+            </article>
+        </section>
 
-                <div class="info-card">
-                 <h3>Diesel Price</h3>
-                <div class="info-value">K <?php echo number_format($settings['diesel_price'], 2); ?></div>
+        <section class="fps-panel">
+            <div class="fps-panel-header">
+                <div>
+                    <h2>Update Pump Price</h2>
+                    <p>Choose the fuel type first, then record the new price, effective date, and update source.</p>
+                </div>
             </div>
 
-            <div class="info-card">
-                <div class="info-icon">
-                    <i class="fas fa-gas-pump"></i>
-                </div>
-                <h3>Available Fuel</h3>
-                <div class="info-value"><?php echo number_format($settings['available_fuel'], 2); ?> L</div>
-                <div class="info-subtitle">Total Stock</div>
-            </div>
-
-            <div class="info-card">
-                <div class="info-icon">
-                    <i class="fas fa-clock"></i>
-                </div>
-                <h3>Last Updated</h3>
-                <div class="info-value" style="font-size: 18px; font-weight: 700; color: var(--gray-700);">
-                    <?php echo date('d M Y', strtotime($settings['updated_at'])); ?>
-                </div>
-                <div class="info-subtitle"><?php echo date('h:i A', strtotime($settings['updated_at'])); ?></div>
-            </div>
-        </div>
-
-        <!-- Update Form -->
-        <div class="form-card">
-            <div class="form-title">
-                <i class="fas fa-edit"></i> Update Fuel Price
-            </div>
-
-            <form method="POST" action="" id="priceForm">
-                <div class="form-group">
-                    <label>
-                        <i class="fas fa-money-bill-wave"></i> New Fuel Price (ZMW per Liter) <span class="required">*</span>
-                    </label>
-                    <input 
-                        type="number" 
-                        name="fuel_price" 
-                        id="fuel_price" 
-                        step="0.01" 
-                        min="0.01" 
-                        value="<?php echo $settings['fuel_price']; ?>"
-                        placeholder="e.g., 28.50"
-                        required
-                        oninput="updatePreview()"
-                    >
-                    <div class="helper-text">
-                        <i class="fas fa-info-circle"></i>
-                        Enter the new fuel price per liter in Zambian Kwacha
-                    </div>
-                    <div class="form-group">
-                       <label><i class="fas fa-money-bill-wave"></i>Select Fuel Type *<span class="required">*</span></label>
-                       <select name="fuel_type" required>
-                       <option value="petrol">Petrol</option>
-                       <option value="diesel">Diesel</option>
-                       </select>
-                    </div>
-                </div>
-                
-
-                <!-- Live Price Preview -->
-                <div class="price-preview" id="pricePreview">
-                    <div class="preview-title">
-                        <i class="fas fa-chart-line"></i> Price Change Preview
-                    </div>
-                    <div class="price-comparison">
-                        <span class="old-price" id="previewOld">K 0.00</span>
-                        <span class="arrow"><i class="fas fa-arrow-right"></i></span>
-                        <span class="new-price" id="previewNew">K 0.00</span>
-                    </div>
-                    <div style="text-align: center; margin-top: 10px;">
-                        <span class="price-change-badge" id="changeBadge">
-                            <i class="fas fa-arrow-up"></i>
-                            <span id="changeText">0.00%</span>
-                        </span>
+            <form method="POST" action="" id="fuelPriceForm" novalidate>
+                <div class="fps-fieldset">
+                    <span class="fps-label">Fuel Type</span>
+                    <div class="fps-segmented" role="radiogroup" aria-label="Fuel Type">
+                        <?php foreach (['petrol' => 'Petrol', 'diesel' => 'Diesel'] as $fuelKey => $fuelLabel): ?>
+                            <label class="fps-segment">
+                                <input type="radio" name="fuel_type" value="<?php echo fuel_h($fuelKey); ?>" <?php echo $formData['fuel_type'] === $fuelKey ? 'checked' : ''; ?>>
+                                <span><?php echo fuel_h($fuelLabel); ?></span>
+                            </label>
+                        <?php endforeach; ?>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>
-                        <i class="fas fa-comment-alt"></i> Reason for Price Change <span class="required">*</span>
-                    </label>
-                    <textarea 
-                        name="reason" 
-                        placeholder="Please provide a detailed reason for changing the fuel price. For example: 'Increase in crude oil prices', 'Exchange rate fluctuation', 'Supplier price adjustment', etc."
-                        required
-                    ></textarea>
-                    <div class="helper-text">
-                        <i class="fas fa-info-circle"></i>
-                        This reason will be logged and visible in the price change history
+                <div class="fps-current-context">
+                    <div>
+                        <span class="fps-context-label">Updating</span>
+                        <strong class="fps-context-value" id="selectedFuelLabel"><?php echo fuel_h(ucfirst($formData['fuel_type'])); ?></strong>
+                    </div>
+                    <div>
+                        <span class="fps-context-label">Current Price</span>
+                        <strong class="fps-context-value" id="currentPriceValue"><?php echo fuel_h(fuel_format_price_per_liter($selectedCurrentPrice)); ?></strong>
                     </div>
                 </div>
 
-                <button type="submit" name="update_price" class="submit-btn" onclick="return confirmPriceChange()">
-                    <i class="fas fa-save"></i>
-                    Update Fuel Price
-                </button>
+                <div class="fps-form-grid">
+                    <div class="fps-field">
+                        <label class="fps-label" for="fuel_price">New Price (ZMW/L)</label>
+                        <div class="fps-input-wrap">
+                            <span class="fps-prefix">K</span>
+                            <input
+                                class="fps-input fps-input-with-prefix"
+                                type="number"
+                                name="fuel_price"
+                                id="fuel_price"
+                                step="0.01"
+                                min="0.01"
+                                placeholder="e.g. 29.40"
+                                value="<?php echo fuel_h($formData['fuel_price']); ?>"
+                                required
+                            >
+                        </div>
+                    </div>
+
+                    <div class="fps-field">
+                        <label class="fps-label" for="effective_date">Effective Date</label>
+                        <input
+                            class="fps-input"
+                            type="date"
+                            name="effective_date"
+                            id="effective_date"
+                            value="<?php echo fuel_h($formData['effective_date']); ?>"
+                            required
+                        >
+                    </div>
+
+                    <div class="fps-field">
+                        <label class="fps-label" for="source_type">Source Type</label>
+                        <select class="fps-input" name="source_type" id="source_type" required>
+                            <?php foreach ($sourceOptions as $sourceKey => $sourceLabel): ?>
+                                <option value="<?php echo fuel_h($sourceKey); ?>" <?php echo $formData['source_type'] === $sourceKey ? 'selected' : ''; ?>>
+                                    <?php echo fuel_h($sourceLabel); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <?php $showReferenceMonth = $formData['source_type'] === 'erb_revised_pump_prices'; ?>
+                    <div class="fps-field" id="referenceMonthField" <?php echo $showReferenceMonth ? '' : 'hidden'; ?>>
+                        <label class="fps-label" for="reference_month">Reference Month</label>
+                        <input
+                            class="fps-input"
+                            type="month"
+                            name="reference_month"
+                            id="reference_month"
+                            value="<?php echo fuel_h($formData['reference_month']); ?>"
+                            <?php echo $showReferenceMonth ? '' : 'disabled'; ?>
+                        >
+                    </div>
+
+                    <div class="fps-field fps-field-full">
+                        <label class="fps-label" for="notes">Additional Notes / Reason</label>
+                        <textarea
+                            class="fps-input fps-textarea"
+                            name="notes"
+                            id="notes"
+                            placeholder="Optional notes about the ERB notice, correction, or internal reason."
+                        ><?php echo fuel_h($formData['notes']); ?></textarea>
+                    </div>
+                </div>
+
+                <div class="fps-preview" id="pricePreview" hidden>
+                    <div class="fps-preview-header">
+                        <span class="fps-label">Change Preview</span>
+                        <span class="fps-badge fps-badge-neutral" id="changeBadge">0.00%</span>
+                    </div>
+                    <div class="fps-preview-values">
+                        <span class="fps-preview-old" id="previewOld">K 0.00/L</span>
+                        <span class="fps-preview-arrow">to</span>
+                        <span class="fps-preview-new" id="previewNew">K 0.00/L</span>
+                    </div>
+                </div>
+
+                <div class="fps-form-actions">
+                    <button type="submit" name="update_price" class="fps-primary-button">Save Price Update</button>
+                </div>
             </form>
-        </div>
+        </section>
 
-        <!-- Price History -->
-        <div class="history-card">
-            <div class="history-title">
-                <i class="fas fa-history"></i> Price Change History
+        <section class="fps-panel">
+            <div class="fps-panel-header fps-panel-header-split">
+                <div>
+                    <h2>Price History</h2>
+                    <p>Review recent price revisions and keep Petrol and Diesel changes easy to trace.</p>
+                </div>
+                <div class="fps-filter-chips" aria-label="History filters">
+                    <?php foreach (['all' => 'All', 'petrol' => 'Petrol', 'diesel' => 'Diesel'] as $filterKey => $filterLabel): ?>
+                        <a
+                            href="fuelset.php?history_filter=<?php echo urlencode($filterKey); ?>"
+                            class="fps-filter-chip <?php echo $historyFilter === $filterKey ? 'is-active' : ''; ?>"
+                        >
+                            <?php echo fuel_h($filterLabel); ?>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
             </div>
-            
-            <?php if (count($priceHistory) > 0): ?>
-                <div class="table-container">
-                    <table class="history-table">
+
+            <?php if (!empty($priceHistory)): ?>
+                <div class="fps-table-wrap">
+                    <table class="fps-history-table">
                         <thead>
                             <tr>
-                                <th><i class="fas fa-calendar"></i> Date & Time</th>
-                                <th><i class="fas fa-exchange-alt"></i> Price Change</th>
-                                <th><i class="fas fa-percentage"></i> % Change</th>
-                                <th><i class="fas fa-user"></i> Changed By</th>
-                                <th><i class="fas fa-comment"></i> Reason</th>
+                                <th>Effective Date</th>
+                                <th>Fuel Type</th>
+                                <th>Previous Price</th>
+                                <th>New Price</th>
+                                <th>% Change</th>
+                                <th>Updated By</th>
+                                <th>Source</th>
+                                <th>Notes</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($priceHistory as $history): ?>
-<?php 
-    $change = $history['new_price'] - $history['old_price'];
-    if ($history['old_price'] != 0) {
-        $changePercent = (($change / $history['old_price']) * 100);
-    } else {
-        $changePercent = 0;
-    }
-    $isIncrease = $change > 0;
-?>
-<tr>
-    <td><?php echo date('d M Y, h:i A', strtotime($history['created_at'])); ?></td>
-    <td>
-        <div class="price-change-cell">
-            <span class="price-old">K <?php echo number_format($history['old_price'], 2); ?></span>
-            <span class="price-arrow"><i class="fas fa-arrow-right"></i></span>
-            <span class="price-new">K <?php echo number_format($history['new_price'], 2); ?></span>
-        </div>
-    </td>
-    <td>
-        <span class="change-badge <?php echo $isIncrease ? 'up' : 'down'; ?>">
-            <i class="fas fa-arrow-<?php echo $isIncrease ? 'up' : 'down'; ?>"></i>
-            <?php echo number_format(abs($changePercent), 2); ?>%
-        </span>
-    </td>
-    <td><?php echo htmlspecialchars($history['changed_by']); ?></td>
-    <td><?php echo htmlspecialchars($history['reason']); ?></td>
-</tr>
-<?php endforeach; ?>
+                                <?php
+                                $oldPrice = (float) ($history['old_price'] ?? 0);
+                                $newPrice = (float) ($history['new_price'] ?? 0);
+                                $delta = $newPrice - $oldPrice;
+                                $changePercent = $oldPrice > 0 ? ($delta / $oldPrice) * 100 : ($newPrice > 0 ? 100 : 0);
+                                $changeClass = 'fps-badge-neutral';
+                                if ($delta > 0) {
+                                    $changeClass = 'fps-badge-warning';
+                                } elseif ($delta < 0) {
+                                    $changeClass = 'fps-badge-positive';
+                                }
+                                $meta = fuel_parse_history_reason((string) ($history['reason'] ?? ''), (string) ($history['created_at'] ?? ''));
+                                $fuelType = fuel_normalize_type($history['fuel_type'] ?? 'petrol');
+                                ?>
+                                <tr>
+                                    <td><?php echo fuel_h(fuel_format_date_label($meta['effective_date'])); ?></td>
+                                    <td>
+                                        <span class="fps-type-chip fps-type-<?php echo fuel_h($fuelType); ?>">
+                                            <?php echo fuel_h(ucfirst($fuelType)); ?>
+                                        </span>
+                                    </td>
+                                    <td><?php echo fuel_h(fuel_format_price_per_liter($oldPrice)); ?></td>
+                                    <td><?php echo fuel_h(fuel_format_price_per_liter($newPrice)); ?></td>
+                                    <td>
+                                        <span class="fps-badge <?php echo fuel_h($changeClass); ?>">
+                                            <?php echo fuel_h(number_format(abs($changePercent), 2)); ?>%
+                                        </span>
+                                    </td>
+                                    <td><?php echo fuel_h($history['changed_by'] ?? 'System'); ?></td>
+                                    <td>
+                                        <div class="fps-source-copy"><?php echo fuel_h($meta['source']); ?></div>
+                                        <?php if ($meta['reference_month'] !== ''): ?>
+                                            <div class="fps-table-meta">Ref month: <?php echo fuel_h(fuel_format_reference_month($meta['reference_month'])); ?></div>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <div class="fps-notes-copy"><?php echo fuel_h($meta['notes']); ?></div>
+                                        <div class="fps-table-meta">Logged <?php echo fuel_h(fuel_format_datetime_label($history['created_at'] ?? null)); ?></div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
             <?php else: ?>
-                <div class="empty-state">
-                    <i class="fas fa-chart-line"></i>
-                    <p style="font-weight: 600; color: var(--gray-700); margin-top: 10px;">No price change history yet</p>
-                    <p style="font-size: 14px; margin-top: 5px;">Price changes will appear here once you update the fuel price</p>
+                <div class="fps-empty-state">
+                    <h3>No price changes found</h3>
+                    <p>Once a Petrol or Diesel price is updated, the revision history will appear here.</p>
                 </div>
             <?php endif; ?>
-        </div>
+        </section>
     </div>
 
     <script>
-        const currentPrice = <?php echo $settings['fuel_price']; ?>;
+        const fuelPrices = {
+            petrol: <?php echo json_encode((float) ($settings['petrol_price'] ?? 0)); ?>,
+            diesel: <?php echo json_encode((float) ($settings['diesel_price'] ?? 0)); ?>
+        };
 
-        function updatePreview() {
-            const newPriceInput = document.getElementById('fuel_price');
-            const newPrice = parseFloat(newPriceInput.value) || 0;
-            const preview = document.getElementById('pricePreview');
-            
-            if (newPrice > 0 && newPrice != currentPrice) {
-                const change = newPrice - currentPrice;
-                const changePercent = ((change / currentPrice) * 100);
-                const isIncrease = change > 0;
-                
-                document.getElementById('previewOld').textContent = 'K ' + currentPrice.toFixed(2);
-                document.getElementById('previewNew').textContent = 'K ' + newPrice.toFixed(2);
-                document.getElementById('changeText').textContent = Math.abs(changePercent).toFixed(2) + '%';
-                
-                const badge = document.getElementById('changeBadge');
-                badge.className = 'price-change-badge ' + (isIncrease ? 'increase' : 'decrease');
-                badge.querySelector('i').className = 'fas fa-arrow-' + (isIncrease ? 'up' : 'down');
-                
-                preview.classList.add('show');
-            } else {
-                preview.classList.remove('show');
+        const fuelLabels = {
+            petrol: 'Petrol',
+            diesel: 'Diesel'
+        };
+
+        function getSelectedFuelType() {
+            const selected = document.querySelector('input[name="fuel_type"]:checked');
+            return selected ? selected.value : 'petrol';
+        }
+
+        function formatPrice(amount) {
+            return 'K ' + Number(amount).toFixed(2) + '/L';
+        }
+
+        function formatPriceInputValue(amount) {
+            return Number(amount).toFixed(2);
+        }
+
+        function syncPriceInputToCurrent(force = false) {
+            const fuelType = getSelectedFuelType();
+            const currentPrice = fuelPrices[fuelType] || 0;
+            const priceInput = document.getElementById('fuel_price');
+
+            if (force || priceInput.value.trim() === '' || Number(priceInput.value) <= 0) {
+                priceInput.value = formatPriceInputValue(currentPrice);
             }
+        }
+
+        function toggleReferenceMonthField() {
+            const sourceType = document.getElementById('source_type').value;
+            const field = document.getElementById('referenceMonthField');
+            const input = document.getElementById('reference_month');
+            const shouldShow = sourceType === 'erb_revised_pump_prices';
+
+            field.hidden = !shouldShow;
+            input.disabled = !shouldShow;
+        }
+
+        function updatePricePreview() {
+            const fuelType = getSelectedFuelType();
+            const currentPrice = fuelPrices[fuelType] || 0;
+            const newPriceInput = document.getElementById('fuel_price');
+            const newPrice = parseFloat(newPriceInput.value || '0');
+            const preview = document.getElementById('pricePreview');
+            const badge = document.getElementById('changeBadge');
+
+            document.getElementById('selectedFuelLabel').textContent = fuelLabels[fuelType];
+            document.getElementById('currentPriceValue').textContent = formatPrice(currentPrice);
+            document.getElementById('previewOld').textContent = formatPrice(currentPrice);
+
+            if (!newPrice || newPrice <= 0 || newPrice === currentPrice) {
+                preview.hidden = true;
+                document.getElementById('previewNew').textContent = formatPrice(currentPrice);
+                badge.textContent = '0.00%';
+                badge.className = 'fps-badge fps-badge-neutral';
+                return;
+            }
+
+            const changePercent = currentPrice > 0
+                ? ((newPrice - currentPrice) / currentPrice) * 100
+                : 100;
+            badge.textContent = Math.abs(changePercent).toFixed(2) + '%';
+            badge.className = 'fps-badge ' + (changePercent >= 0 ? 'fps-badge-warning' : 'fps-badge-positive');
+            document.getElementById('previewNew').textContent = formatPrice(newPrice);
+            preview.hidden = false;
         }
 
         function confirmPriceChange() {
-            const newPrice = parseFloat(document.getElementById('fuel_price').value);
-            const reason = document.querySelector('textarea[name="reason"]').value.trim();
-            
-            if (!reason) {
-                alert('Please provide a reason for the price change.');
-                return false;
-            }
-            
-            if (newPrice === currentPrice) {
-                alert('The new price is the same as the current price.');
+            const fuelType = getSelectedFuelType();
+            const sourceSelect = document.getElementById('source_type');
+            const currentPrice = fuelPrices[fuelType] || 0;
+            const priceValue = document.getElementById('fuel_price').value;
+            const newPrice = parseFloat(priceValue || '0');
+            const effectiveDate = document.getElementById('effective_date').value;
+            const referenceMonthInput = document.getElementById('reference_month');
+
+            if (!newPrice || newPrice <= 0) {
+                alert('Enter the new price before saving.');
                 return false;
             }
 
-            const change = newPrice - currentPrice;
-            const changePercent = ((change / currentPrice) * 100);
-            const changeText = change > 0 ? 'increase' : 'decrease';
-            
-            return confirm(
-                `Are you sure you want to update the fuel price?\n\n` +
-                `Current Price: K ${currentPrice.toFixed(2)}\n` +
-                `New Price: K ${newPrice.toFixed(2)}\n` +
-                `Change: ${changeText} of ${Math.abs(changePercent).toFixed(2)}%`
+            if (newPrice === currentPrice) {
+                alert('The new price matches the current price. Enter a different value.');
+                return false;
+            }
+
+            if (!effectiveDate) {
+                alert('Choose the effective date for this price update.');
+                return false;
+            }
+
+            if (sourceSelect.value === 'erb_revised_pump_prices' && !referenceMonthInput.value) {
+                alert('Reference month is required for ERB pump price updates.');
+                return false;
+            }
+
+            return window.confirm(
+                'Save ' + fuelLabels[fuelType] + ' price update?\n\n' +
+                'Current Price: ' + formatPrice(currentPrice) + '\n' +
+                'New Price: ' + formatPrice(newPrice) + '\n' +
+                'Effective Date: ' + effectiveDate
             );
         }
 
-        // Auto-hide alert after 5 seconds
-        <?php if ($message): ?>
-            setTimeout(() => {
-                const alert = document.querySelector('.alert');
-                if (alert) {
-                    alert.style.animation = 'slideDown 0.3s reverse';
-                    setTimeout(() => alert.remove(), 300);
-                }
-            }, 5000);
+        document.querySelectorAll('input[name="fuel_type"]').forEach((input) => {
+            input.addEventListener('change', function () {
+                syncPriceInputToCurrent(true);
+                updatePricePreview();
+            });
+        });
+
+        document.getElementById('fuel_price').addEventListener('input', updatePricePreview);
+        document.getElementById('source_type').addEventListener('change', toggleReferenceMonthField);
+        document.getElementById('fuelPriceForm').addEventListener('submit', function (event) {
+            if (!confirmPriceChange()) {
+                event.preventDefault();
+            }
+        });
+
+        syncPriceInputToCurrent();
+        toggleReferenceMonthField();
+        updatePricePreview();
+
+        <?php if ($message !== ''): ?>
+        window.setTimeout(function () {
+            const alert = document.querySelector('.fps-alert');
+            if (alert) {
+                alert.remove();
+            }
+        }, 5000);
         <?php endif; ?>
     </script>
 </body>
