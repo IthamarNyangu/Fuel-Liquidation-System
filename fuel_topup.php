@@ -1,1186 +1,896 @@
 <?php
-// fuel_topup.php
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', '1');
 
 require_once 'auth_check.php';
 require_once 'facility_auth.php';
 require_once 'db_config.php';
 
-// Get facility information
-$is_super_admin = isSuperAdmin();
-$user_facility_id = getUserFacilityId();
-$user_role = isset($_SESSION['user_role']) ? $_SESSION['user_role'] : 'staff';
-$user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'User';
-
-// Check if non-super-admin user has a facility assigned
-if (!$is_super_admin && !$user_facility_id) {
-    die("Error: Your account is not assigned to a facility. Please contact your administrator.");
+function topup_h($value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
-// Only allow admins and super admins to access this page
-if (!in_array($user_role, ['super_admin', 'admin', 'facility_admin'])) {
+function topup_currency(float $amount): string
+{
+    return 'K ' . number_format($amount, 2);
+}
+
+function topup_transaction_label(string $type): string
+{
+    $labels = [
+        'addition' => 'Add Balance',
+        'deduction' => 'Deduct Balance',
+        'adjustment' => 'Adjustment',
+    ];
+
+    return $labels[$type] ?? ucwords(str_replace('_', ' ', $type));
+}
+
+function topup_transaction_class(string $type): string
+{
+    if ($type === 'addition') {
+        return 'is-addition';
+    }
+
+    if ($type === 'deduction') {
+        return 'is-deduction';
+    }
+
+    return 'is-neutral';
+}
+
+function topup_reason_options(): array
+{
+    return [
+        'monthly_allocation' => 'Monthly allocation',
+        'emergency_top_up' => 'Emergency top-up',
+        'correction' => 'Correction',
+        'reversal' => 'Reversal',
+        'approved_deduction' => 'Approved deduction',
+        'other' => 'Other',
+    ];
+}
+
+function topup_fuel_type_label(?string $value): string
+{
+    $value = strtolower(trim((string) $value));
+    if ($value === 'petrol' || $value === 'diesel') {
+        return ucfirst($value);
+    }
+
+    return 'Not set';
+}
+
+function topup_vehicle_display(array $vehicle): string
+{
+    $vehicleName = trim((string) ($vehicle['vehicle_name'] ?? ''));
+    $plateNumber = trim((string) ($vehicle['number_plate'] ?? ''));
+
+    if ($vehicleName !== '' && $plateNumber !== '') {
+        return $vehicleName . ' · ' . $plateNumber;
+    }
+
+    if ($vehicleName !== '') {
+        return $vehicleName;
+    }
+
+    if ($plateNumber !== '') {
+        return $plateNumber;
+    }
+
+    return 'Unknown vehicle';
+}
+
+function topup_is_valid_date(string $value): bool
+{
+    if ($value === '') {
+        return false;
+    }
+
+    $date = DateTime::createFromFormat('Y-m-d', $value);
+    return $date instanceof DateTime && $date->format('Y-m-d') === $value;
+}
+
+function topup_fetch_vehicles(PDO $pdo, bool $isSuperAdmin, ?int $facilityId): array
+{
+    $baseSql = "
+        SELECT
+            v.id,
+            v.vehicle_name,
+            v.number_plate,
+            COALESCE(v.float_balance, 0) AS float_balance,
+            COALESCE(NULLIF(v.float_account_name, ''), 'Not assigned') AS float_account_name,
+            COALESCE(v.fuel_type, '') AS fuel_type,
+            COALESCE(f.facility_name, 'Unassigned Facility') AS facility_name
+        FROM vehicles v
+        LEFT JOIN facilities f ON v.facility_id = f.id
+    ";
+
+    if ($isSuperAdmin) {
+        $stmt = $pdo->query($baseSql . ' ORDER BY v.vehicle_name, v.number_plate');
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    $stmt = $pdo->prepare($baseSql . ' WHERE v.facility_id = ? ORDER BY v.vehicle_name, v.number_plate');
+    $stmt->execute([$facilityId]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function topup_build_vehicle_lookup(array $vehicles): array
+{
+    $lookup = [];
+    foreach ($vehicles as $vehicle) {
+        $lookup[(string) $vehicle['id']] = $vehicle;
+    }
+
+    return $lookup;
+}
+
+function topup_fetch_facility_display(PDO $pdo, bool $isSuperAdmin, ?int $facilityId): string
+{
+    if ($isSuperAdmin) {
+        return 'All Facilities';
+    }
+
+    $stmt = $pdo->prepare('SELECT facility_name FROM facilities WHERE id = ? LIMIT 1');
+    $stmt->execute([$facilityId]);
+    $facilityName = $stmt->fetchColumn();
+
+    return $facilityName ? (string) $facilityName : 'Your Facility';
+}
+
+function topup_history_page_url(int $page, string $vehicleFilter, string $transactionFilter, string $dateFrom, string $dateTo): string
+{
+    $query = ['history_page' => $page];
+
+    if ($vehicleFilter !== '') {
+        $query['vehicle_filter'] = $vehicleFilter;
+    }
+
+    if ($transactionFilter !== '' && $transactionFilter !== 'all') {
+        $query['transaction_filter'] = $transactionFilter;
+    }
+
+    if ($dateFrom !== '') {
+        $query['date_from'] = $dateFrom;
+    }
+
+    if ($dateTo !== '') {
+        $query['date_to'] = $dateTo;
+    }
+
+    return 'fuel_topup.php?' . http_build_query($query);
+}
+
+$is_super_admin = isSuperAdmin();
+$user_facility_id = getUserFacilityId();
+$user_role = $_SESSION['user_role'] ?? 'staff';
+$user_name = $_SESSION['user_name'] ?? ($_SESSION['user_email'] ?? 'User');
+
+if (!$is_super_admin && !$user_facility_id) {
+    die('Error: Your account is not assigned to a facility. Please contact your administrator.');
+}
+
+if (!in_array($user_role, ['super_admin', 'admin', 'facility_admin'], true)) {
     die("Access denied: You don't have permission to access this page.");
 }
 
 $message = '';
 $messageType = '';
+$reasonOptions = topup_reason_options();
 
+$vehicles = topup_fetch_vehicles($pdo, $is_super_admin, $user_facility_id ? (int) $user_facility_id : null);
+$vehicleLookup = topup_build_vehicle_lookup($vehicles);
+$total_balance = array_sum(array_map(static function (array $vehicle): float {
+    return (float) ($vehicle['float_balance'] ?? 0);
+}, $vehicles));
+$facility_display = topup_fetch_facility_display($pdo, $is_super_admin, $user_facility_id ? (int) $user_facility_id : null);
+
+$postedAdjustmentType = (string) ($_POST['adjustment_type'] ?? 'addition');
+$postedReasonType = (string) ($_POST['reason_type'] ?? 'monthly_allocation');
+
+$formData = [
+    'vehicle_id' => trim((string) ($_POST['vehicle_id'] ?? '')),
+    'adjustment_type' => in_array($postedAdjustmentType, ['addition', 'deduction'], true)
+        ? $postedAdjustmentType
+        : 'addition',
+    'amount' => trim((string) ($_POST['amount'] ?? '')),
+    'reason_type' => array_key_exists($postedReasonType, $reasonOptions)
+        ? $postedReasonType
+        : 'monthly_allocation',
+    'notes' => trim((string) ($_POST['notes'] ?? '')),
+];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['adjust_fuel'])) {
-    $vehicle_id = $_POST['vehicle_id'];
-    $adjustment_type = $_POST['adjustment_type'];
-    $amount = abs(floatval($_POST['amount'])); // Ensure positive number
-    $reason = trim($_POST['reason']);
-    $adjusted_by = $user_name; // Use logged-in user name
-    
-    // Handle optional photo attachment
+    $vehicle_id = $formData['vehicle_id'];
+    $adjustment_type = $formData['adjustment_type'];
+    $amount = abs((float) $formData['amount']);
+    $reason_type = $formData['reason_type'];
+    $notes = trim((string) preg_replace('/\s+/', ' ', $formData['notes']));
+    $formData['notes'] = $notes;
+
     $photo_data = null;
     $photo_filename = null;
     $photo_type = null;
-    
+
     if (isset($_FILES['attachment']) && $_FILES['attachment']['error'] === UPLOAD_ERR_OK) {
         $photo_data = file_get_contents($_FILES['attachment']['tmp_name']);
         $photo_filename = $_FILES['attachment']['name'];
         $photo_type = $_FILES['attachment']['type'];
     }
-    
-    if (empty($reason)) {
-        $message = 'Reason is mandatory!';
+
+    if ($vehicle_id === '' || !isset($vehicleLookup[$vehicle_id])) {
+        $message = 'Select a valid vehicle before saving the transaction.';
+        $messageType = 'error';
+    } elseif (!array_key_exists($reason_type, $reasonOptions)) {
+        $message = 'Select a valid reason type.';
+        $messageType = 'error';
+    } elseif ($reason_type === 'other' && $notes === '') {
+        $message = 'Add notes when the reason type is Other.';
         $messageType = 'error';
     } elseif ($amount <= 0) {
-        $message = 'Amount must be greater than zero!';
+        $message = 'Amount must be greater than zero.';
         $messageType = 'error';
     } else {
-        // Verify vehicle belongs to user's facility (if not super admin)
-        if (!$is_super_admin) {
-            $checkStmt = $pdo->prepare("SELECT COUNT(*) as count FROM vehicles WHERE id = ? AND facility_id = ?");
-            $checkStmt->execute([$vehicle_id, $user_facility_id]);
-            $checkResult = $checkStmt->fetch(PDO::FETCH_ASSOC);
-            
-            if ($checkResult['count'] == 0) {
-                $message = 'Access denied: This vehicle does not belong to your facility.';
+        try {
+            $stmt = $pdo->prepare("
+                SELECT vehicle_name, float_balance, COALESCE(NULLIF(float_account_name, ''), 'Not assigned') AS float_account_name
+                FROM vehicles
+                WHERE id = ?
+                LIMIT 1
+            ");
+            $stmt->execute([(int) $vehicle_id]);
+            $vehicleData = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$vehicleData) {
+                $message = 'Vehicle not found.';
                 $messageType = 'error';
-                goto skip_adjustment;
+            } else {
+                $previousBalance = round((float) ($vehicleData['float_balance'] ?? 0), 2);
+                $newBalance = $adjustment_type === 'addition'
+                    ? round($previousBalance + $amount, 2)
+                    : round($previousBalance - $amount, 2);
+
+                if ($adjustment_type === 'deduction' && $newBalance < 0) {
+                    $message = 'Cannot deduct more than the current balance. Current: ' . topup_currency($previousBalance) . ', Attempted: ' . topup_currency($amount);
+                    $messageType = 'error';
+                } else {
+                    $reason = $reasonOptions[$reason_type];
+                    if ($notes !== '') {
+                        $reason .= ' | ' . $notes;
+                    }
+
+                    $pdo->beginTransaction();
+
+                    $updateStmt = $pdo->prepare('UPDATE vehicles SET float_balance = ? WHERE id = ?');
+                    $updateStmt->execute([$newBalance, (int) $vehicle_id]);
+
+                    $insertStmt = $pdo->prepare("
+                        INSERT INTO float_transactions
+                        (float_account, transaction_type, amount, previous_balance, new_balance, reason, created_by, photo_data, photo_filename, photo_type)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ");
+                    $insertStmt->execute([
+                        $vehicleData['float_account_name'],
+                        $adjustment_type,
+                        $amount,
+                        $previousBalance,
+                        $newBalance,
+                        $reason,
+                        $user_name,
+                        $photo_data,
+                        $photo_filename,
+                        $photo_type,
+                    ]);
+
+                    $pdo->commit();
+
+                    $actionText = $adjustment_type === 'addition' ? 'added to' : 'deducted from';
+                    $message = topup_currency($amount) . ' ' . $actionText . ' ' . $vehicleData['vehicle_name'] . '. New balance: ' . topup_currency($newBalance);
+                    $messageType = 'success';
+
+                    $vehicles = topup_fetch_vehicles($pdo, $is_super_admin, $user_facility_id ? (int) $user_facility_id : null);
+                    $vehicleLookup = topup_build_vehicle_lookup($vehicles);
+                    $total_balance = array_sum(array_map(static function (array $vehicle): float {
+                        return (float) ($vehicle['float_balance'] ?? 0);
+                    }, $vehicles));
+
+                    $formData['amount'] = '';
+                    $formData['reason_type'] = 'monthly_allocation';
+                    $formData['notes'] = '';
+                }
             }
-        }
-        
-        // Get current float balance for the vehicle
-        $stmt = $pdo->prepare("SELECT float_balance, float_account_name, vehicle_name FROM vehicles WHERE id = ?");
-        $stmt->execute([$vehicle_id]);
-        $vehicleData = $stmt->fetch(PDO::FETCH_ASSOC);
-        $previousBalance = floatval($vehicleData['float_balance']);
-        $float_account = $vehicleData['float_account_name'];
-        $vehicle_name = $vehicleData['vehicle_name'];
-        
-        // Calculate new balance with precision
-        if ($adjustment_type === 'addition') {
-            $newBalance = round($previousBalance + $amount, 2);
-        } else {
-            $newBalance = round($previousBalance - $amount, 2);
-            if ($newBalance < 0) {
-                $message = 'Cannot deduct more than current balance! Current: K ' . number_format($previousBalance, 2) . ', Attempted: K ' . number_format($amount, 2);
-                $messageType = 'error';
-                goto skip_adjustment;
+        } catch (Throwable $exception) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
             }
+
+            $message = 'The transaction could not be saved right now. Please try again.';
+            $messageType = 'error';
         }
-        
-        // Update vehicle float balance
-        $stmt = $pdo->prepare("UPDATE vehicles SET float_balance = ? WHERE id = ?");
-        $stmt->execute([$newBalance, $vehicle_id]);
-        
-        // Log transaction in float_transactions table
-        $stmt = $pdo->prepare("
-            INSERT INTO float_transactions 
-            (float_account, transaction_type, amount, previous_balance, new_balance, reason, created_by, photo_data, photo_filename, photo_type) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->execute([
-            $float_account,
-            $adjustment_type,
-            $amount,
-            $previousBalance,
-            $newBalance,
-            $reason,
-            $adjusted_by,
-            $photo_data,
-            $photo_filename,
-            $photo_type
-        ]);
-        
-        $actionText = $adjustment_type === 'addition' ? 'added to' : 'deducted from';
-        $message = 'K ' . number_format($amount, 2) . ' ' . $actionText . ' ' . $vehicle_name . ' successfully! New balance: K ' . number_format($newBalance, 2);
-        $messageType = 'success';
     }
-    
-    skip_adjustment:
 }
 
-// Fetch all vehicles with their float accounts (filtered by facility)
-if ($is_super_admin) {
-    $vehiclesStmt = $pdo->query("
-        SELECT 
-            id, 
-            vehicle_name, 
-            number_plate, 
-            float_account_name, 
-            COALESCE(float_balance, 0) as float_balance 
-        FROM vehicles 
-        ORDER BY vehicle_name
-    ");
-} else {
-    $vehiclesStmt = $pdo->prepare("
-        SELECT 
-            id, 
-            vehicle_name, 
-            number_plate, 
-            float_account_name, 
-            COALESCE(float_balance, 0) as float_balance 
-        FROM vehicles 
-        WHERE facility_id = ?
-        ORDER BY vehicle_name
-    ");
-    $vehiclesStmt->execute([$user_facility_id]);
+$historyVehicleFilter = trim((string) ($_GET['vehicle_filter'] ?? ''));
+if ($historyVehicleFilter !== '' && !isset($vehicleLookup[$historyVehicleFilter])) {
+    $historyVehicleFilter = '';
 }
-$vehicles = $vehiclesStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Calculate total balance (only for user's facility)
-$total_balance = array_sum(array_column($vehicles, 'float_balance'));
-
-// Fetch adjustment history (filtered by facility)
-if ($is_super_admin) {
-    $stmt = $pdo->query("
-        SELECT ft.*, v.facility_id, f.facility_name
-        FROM float_transactions ft
-        LEFT JOIN vehicles v ON ft.float_account = v.float_account_name
-        LEFT JOIN facilities f ON v.facility_id = f.id
-        WHERE ft.transaction_type IN ('addition', 'deduction', 'adjustment')
-        ORDER BY ft.created_at DESC 
-        LIMIT 50
-    ");
-} else {
-    $stmt = $pdo->prepare("
-        SELECT ft.*, v.facility_id
-        FROM float_transactions ft
-        LEFT JOIN vehicles v ON ft.float_account = v.float_account_name
-        WHERE ft.transaction_type IN ('addition', 'deduction', 'adjustment')
-        AND v.facility_id = ?
-        ORDER BY ft.created_at DESC 
-        LIMIT 50
-    ");
-    $stmt->execute([$user_facility_id]);
+$historyTransactionFilter = trim((string) ($_GET['transaction_filter'] ?? 'all'));
+if (!in_array($historyTransactionFilter, ['all', 'addition', 'deduction', 'adjustment'], true)) {
+    $historyTransactionFilter = 'all';
 }
-$adjustmentHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get facility display name
-if ($is_super_admin) {
-    $facility_display = "All Facilities";
-} else {
-    $facility_query = "SELECT facility_name FROM facilities WHERE id = ?";
-    $facility_stmt = $pdo->prepare($facility_query);
-    $facility_stmt->execute([$user_facility_id]);
-    $facility_row = $facility_stmt->fetch(PDO::FETCH_ASSOC);
-    $facility_display = $facility_row ? $facility_row['facility_name'] : 'Your Facility';
+$historyDateFrom = trim((string) ($_GET['date_from'] ?? ''));
+if ($historyDateFrom !== '' && !topup_is_valid_date($historyDateFrom)) {
+    $historyDateFrom = '';
+}
+
+$historyDateTo = trim((string) ($_GET['date_to'] ?? ''));
+if ($historyDateTo !== '' && !topup_is_valid_date($historyDateTo)) {
+    $historyDateTo = '';
+}
+
+$historyPageSize = 6;
+$historyPage = max(1, (int) ($_GET['history_page'] ?? 1));
+
+$historyBaseSql = "
+    FROM float_transactions ft
+    LEFT JOIN vehicles v ON ft.float_account = v.float_account_name
+    LEFT JOIN facilities f ON v.facility_id = f.id
+    WHERE ft.transaction_type IN ('addition', 'deduction', 'adjustment')
+";
+$historyParams = [];
+
+if (!$is_super_admin) {
+    $historyBaseSql .= ' AND v.facility_id = ?';
+    $historyParams[] = (int) $user_facility_id;
+}
+
+if ($historyVehicleFilter !== '') {
+    $historyBaseSql .= ' AND v.id = ?';
+    $historyParams[] = (int) $historyVehicleFilter;
+}
+
+if ($historyTransactionFilter !== 'all') {
+    $historyBaseSql .= ' AND ft.transaction_type = ?';
+    $historyParams[] = $historyTransactionFilter;
+}
+
+if ($historyDateFrom !== '') {
+    $historyBaseSql .= ' AND DATE(ft.created_at) >= ?';
+    $historyParams[] = $historyDateFrom;
+}
+
+if ($historyDateTo !== '') {
+    $historyBaseSql .= ' AND DATE(ft.created_at) <= ?';
+    $historyParams[] = $historyDateTo;
+}
+
+$historyCountStmt = $pdo->prepare('SELECT COUNT(*) ' . $historyBaseSql);
+$historyCountStmt->execute($historyParams);
+$historyTotalItems = (int) $historyCountStmt->fetchColumn();
+$historyTotalPages = max(1, (int) ceil($historyTotalItems / $historyPageSize));
+$historyPage = min($historyPage, $historyTotalPages);
+$historyOffset = ($historyPage - 1) * $historyPageSize;
+
+$historySql = "
+    SELECT
+        ft.*,
+        v.id AS vehicle_id,
+        v.vehicle_name,
+        v.number_plate,
+        COALESCE(f.facility_name, 'Unassigned Facility') AS facility_name
+" . $historyBaseSql . ' ORDER BY ft.created_at DESC LIMIT ' . (int) $historyPageSize . ' OFFSET ' . (int) $historyOffset;
+$historyStmt = $pdo->prepare($historySql);
+$historyStmt->execute($historyParams);
+$adjustmentHistory = $historyStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$selectedVehicle = $formData['vehicle_id'] !== '' && isset($vehicleLookup[$formData['vehicle_id']])
+    ? $vehicleLookup[$formData['vehicle_id']]
+    : null;
+$historyFromItem = $historyTotalItems > 0 ? ($historyOffset + 1) : 0;
+$historyToItem = $historyTotalItems > 0 ? min($historyOffset + count($adjustmentHistory), $historyTotalItems) : 0;
+$historyPageStart = max(1, $historyPage - 2);
+$historyPageEnd = min($historyTotalPages, $historyPage + 2);
+
+if (($historyPageEnd - $historyPageStart) < 4) {
+    $historyPageStart = max(1, $historyPageEnd - 4);
+    $historyPageEnd = min($historyTotalPages, $historyPageStart + 4);
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vehicle Fuel Top-Up</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        :root {
-            --primary-red: #35627c;
-            --dark-red: #29485d;
-            --light-red: #e9f1f5;
-            --gray-50: #f3f6f8;
-            --gray-100: #eef3f6;
-            --gray-200: #dde4ea;
-            --gray-300: #cad3dc;
-            --gray-400: #8b98a6;
-            --gray-500: #6a7786;
-            --gray-600: #43515f;
-            --gray-700: #26323d;
-            --gray-800: #1f3443;
-            --gray-900: #16202a;
-        }
-
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: radial-gradient(circle at top right, rgba(76, 127, 153, 0.12), transparent 24%), linear-gradient(145deg, #f7f7f5 0%, #f6f8fa 46%, #eef3f6 100%);
-            background-attachment: fixed;
-            min-height: 100vh;
-            padding: 20px;
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-
-        /* Facility Badge */
-        .facility-badge {
-            background: rgba(53, 98, 124, 0.14);
-            color: #35627c;
-            padding: 6px 14px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 700;
-            margin-left: 10px;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            border: 1px solid rgba(53, 98, 124, 0.22);
-        }
-
-        .facility-badge.super-admin {
-            background: linear-gradient(135deg, #29485d, #35627c);
-            color: white;
-            border-color: transparent;
-        }
-
-        /* Header */
-        .header {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(53, 98, 124, 0.16);
-            padding: 25px 30px;
-            border-radius: 20px;
-            margin-bottom: 25px;
-            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
-        }
-
-        .header-content {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-
-        .header h1 {
-            color: var(--gray-900);
-            font-size: 28px;
-            font-weight: 800;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-
-        .back-btn {
-            padding: 10px 20px;
-            background: var(--gray-100);
-            color: var(--gray-700);
-            border: 2px solid var(--gray-300);
-            border-radius: 12px;
-            text-decoration: none;
-            font-weight: 700;
-            transition: all 0.3s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 14px;
-        }
-
-        .back-btn:hover {
-            background: white;
-            border-color: var(--primary-red);
-            color: var(--primary-red);
-        }
-
-        /* Alert */
-        .alert {
-            padding: 16px 20px;
-            border-radius: 16px;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-weight: 600;
-            animation: slideDown 0.3s;
-        }
-
-        @keyframes slideDown {
-            from { transform: translateY(-20px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-        }
-
-        .alert-success {
-            background: #dcfce7;
-            color: #166534;
-            border: 2px solid #86efac;
-        }
-
-        .alert-error {
-            background: #fee2e2;
-            color: #991b1b;
-            border: 2px solid #fca5a5;
-        }
-
-        /* Stats */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .stat-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(53, 98, 124, 0.16);
-            border-radius: 20px;
-            padding: 24px;
-            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
-            position: relative;
-            overflow: hidden;
-            transition: all 0.3s;
-        }
-
-        .stat-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 4px;
-            background: linear-gradient(90deg, var(--dark-red), var(--primary-red));
-        }
-
-        .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 18px 36px rgba(22, 32, 42, 0.12);
-        }
-
-        .stat-icon {
-            width: 50px;
-            height: 50px;
-            background: var(--light-red);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 15px;
-        }
-
-        .stat-icon i {
-            font-size: 22px;
-            color: var(--primary-red);
-        }
-
-        .stat-label {
-            color: var(--gray-600);
-            font-size: 13px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 8px;
-        }
-
-        .stat-value {
-            color: var(--gray-900);
-            font-size: 32px;
-            font-weight: 800;
-            line-height: 1;
-        }
-
-        /* Form Card */
-        .form-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(53, 98, 124, 0.16);
-            padding: 30px;
-            border-radius: 20px;
-            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
-            margin-bottom: 25px;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .form-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 4px;
-            background: linear-gradient(90deg, var(--dark-red), var(--primary-red));
-        }
-
-        .form-title {
-            color: var(--gray-900);
-            font-size: 22px;
-            font-weight: 800;
-            margin-bottom: 25px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-
-        .form-group {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .form-group label {
-            margin-bottom: 8px;
-            color: var(--gray-700);
-            font-weight: 700;
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .required {
-            color: var(--primary-red);
-        }
-
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
-            width: 100%;
-            padding: 12px 16px;
-            border: 2px solid var(--gray-300);
-            border-radius: 12px;
-            font-size: 14px;
-            font-weight: 600;
-            transition: all 0.3s;
-            background: white;
-            font-family: inherit;
-        }
-
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-            outline: none;
-            border-color: var(--primary-red);
-            box-shadow: 0 0 0 3px rgba(53, 98, 124, 0.12);
-        }
-
-        .form-group textarea {
-            resize: vertical;
-            min-height: 100px;
-            line-height: 1.6;
-        }
-
-        /* Radio Group */
-        .radio-group {
-            display: flex;
-            gap: 15px;
-            margin-top: 8px;
-        }
-
-        .radio-option {
-            flex: 1;
-            position: relative;
-        }
-
-        .radio-option input[type="radio"] {
-            position: absolute;
-            opacity: 0;
-            cursor: pointer;
-        }
-
-        .radio-label {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            padding: 14px 20px;
-            background: white;
-            border: 2px solid var(--gray-300);
-            border-radius: 12px;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-weight: 700;
-            font-size: 14px;
-        }
-
-        .radio-option input[type="radio"]:checked + .radio-label {
-            background: var(--light-red);
-            border-color: var(--primary-red);
-            color: var(--primary-red);
-        }
-
-        .radio-label:hover {
-            border-color: var(--primary-red);
-        }
-
-        /* Calculator Preview */
-        .calculator-preview {
-            background: var(--gray-50);
-            border: 2px solid var(--gray-200);
-            border-radius: 16px;
-            padding: 20px;
-            margin-top: 20px;
-            display: none;
-        }
-
-        .calculator-preview.show {
-            display: block;
-            animation: fadeIn 0.3s;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .calc-title {
-            font-size: 14px;
-            font-weight: 700;
-            color: var(--gray-700);
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .calc-equation {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 15px;
-            font-size: 24px;
-            font-weight: 800;
-            color: var(--gray-900);
-            flex-wrap: wrap;
-        }
-
-        .calc-current {
-            color: var(--gray-700);
-        }
-
-        .calc-operator {
-            color: var(--primary-red);
-            font-size: 32px;
-        }
-
-        .calc-amount {
-            color: var(--primary-red);
-        }
-
-        .calc-equals {
-            color: var(--gray-500);
-        }
-
-        .calc-result {
-            color: #10b981;
-            font-size: 32px;
-        }
-
-        .calc-result.deduction {
-            color: var(--primary-red);
-        }
-
-        /* File Upload */
-        .file-upload-area {
-            border: 3px dashed var(--gray-300);
-            border-radius: 16px;
-            padding: 30px;
-            text-align: center;
-            background: var(--gray-50);
-            transition: all 0.3s;
-            cursor: pointer;
-        }
-
-        .file-upload-area:hover {
-            border-color: var(--primary-red);
-            background: var(--light-red);
-        }
-
-        .file-upload-area.has-file {
-            border-color: #10b981;
-            background: #dcfce7;
-        }
-
-        .upload-icon {
-            font-size: 40px;
-            color: var(--gray-400);
-            margin-bottom: 12px;
-        }
-
-        .file-upload-area.has-file .upload-icon {
-            color: #10b981;
-        }
-
-        .upload-text {
-            color: var(--gray-700);
-            font-weight: 600;
-            margin-bottom: 6px;
-        }
-
-        .upload-hint {
-            color: var(--gray-500);
-            font-size: 13px;
-        }
-
-        .file-name-display {
-            margin-top: 12px;
-            padding: 10px;
-            background: white;
-            border-radius: 8px;
-            color: #10b981;
-            font-weight: 700;
-            display: none;
-            align-items: center;
-            gap: 8px;
-            justify-content: center;
-        }
-
-        .file-name-display.show {
-            display: flex;
-        }
-
-        input[type="file"] {
-            display: none;
-        }
-
-        /* Submit Button */
-        .submit-btn {
-            width: 100%;
-            padding: 16px;
-            background: linear-gradient(135deg, var(--dark-red), var(--primary-red));
-            color: white;
-            border: none;
-            border-radius: 12px;
-            font-size: 16px;
-            font-weight: 800;
-            cursor: pointer;
-            transition: all 0.3s;
-            box-shadow: 0 10px 22px rgba(53, 98, 124, 0.18);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            margin-top: 25px;
-        }
-
-        .submit-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 12px 26px rgba(53, 98, 124, 0.22);
-        }
-
-        /* History Table */
-        .history-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(53, 98, 124, 0.16);
-            padding: 30px;
-            border-radius: 20px;
-            box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .history-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 4px;
-            background: linear-gradient(90deg, var(--dark-red), var(--primary-red));
-        }
-
-        .history-title {
-            color: var(--gray-900);
-            font-size: 22px;
-            font-weight: 800;
-            margin-bottom: 25px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .table-container {
-            overflow-x: auto;
-        }
-
-        .history-table {
-            width: 100%;
-            border-collapse: separate;
-            border-spacing: 0;
-        }
-
-        .history-table th {
-            background: var(--gray-100);
-            padding: 14px 16px;
-            text-align: left;
-            font-weight: 700;
-            color: var(--gray-700);
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            white-space: nowrap;
-        }
-
-        .history-table td {
-            padding: 14px 16px;
-            color: var(--gray-900);
-            font-size: 14px;
-            font-weight: 500;
-            background: white;
-            border-bottom: 1px solid var(--gray-200);
-        }
-
-        .history-table tbody tr:hover td {
-            background: var(--light-red);
-        }
-
-        .badge {
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            letter-spacing: 0.5px;
-        }
-
-        .badge-addition {
-            background: rgba(16, 185, 129, 0.2);
-            color: #10b981;
-            border: 1px solid rgba(16, 185, 129, 0.3);
-        }
-
-        .badge-deduction {
-            background: rgba(239, 68, 68, 0.2);
-            color: #ef4444;
-            border: 1px solid rgba(239, 68, 68, 0.3);
-        }
-
-        .facility-tag {
-            font-size: 11px;
-            font-weight: 600;
-            color: #35627c;
-            background: rgba(139, 92, 246, 0.1);
-            padding: 3px 8px;
-            border-radius: 6px;
-            display: inline-block;
-            margin-top: 4px;
-            border: 1px solid rgba(139, 92, 246, 0.2);
-        }
-
-        .view-btn {
-            padding: 6px 12px;
-            background: linear-gradient(135deg, var(--dark-red), var(--primary-red));
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 700;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            transition: all 0.3s;
-        }
-
-        .view-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 12px 24px rgba(53, 98, 124, 0.24);
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: var(--gray-500);
-        }
-
-        .empty-state i {
-            font-size: 64px;
-            color: var(--gray-300);
-            margin-bottom: 15px;
-        }
-
-        /* Mobile Responsive */
-        @media (max-width: 768px) {
-            body {
-                padding: 15px;
-            }
-
-            .header-content {
-                flex-direction: column;
-                gap: 15px;
-                align-items: flex-start;
-            }
-
-            .header h1 {
-                font-size: 22px;
-            }
-
-            .back-btn {
-                width: 100%;
-                justify-content: center;
-            }
-
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-
-            .radio-group {
-                flex-direction: column;
-            }
-
-            .calc-equation {
-                font-size: 18px;
-            }
-
-            .calc-result {
-                font-size: 24px;
-            }
-
-            .history-table {
-                font-size: 12px;
-            }
-
-            .history-table th,
-            .history-table td {
-                padding: 10px 8px;
-            }
-        }
-    </style>
+    <link rel="stylesheet" type="text/css" href="fuel_topup.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/fuel_topup.css')); ?>">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="header-content">
-                <h1>
-                    <i class="fas fa-gas-pump"></i> Vehicle Fuel Top-Up
-                    <span class="facility-badge <?php echo $is_super_admin ? 'super-admin' : ''; ?>">
-                        <i class="fas fa-<?php echo $is_super_admin ? 'crown' : 'building'; ?>"></i> 
-                        <?php echo htmlspecialchars($facility_display); ?>
-                    </span>
-                </h1>
-                <a href="dashboard.php" class="back-btn">
-                    <i class="fas fa-arrow-left"></i> Back to Dashboard
-                </a>
+    <div class="vft-page">
+        <header class="vft-header">
+            <a href="dashboard.php" class="vft-back-link">Back to Dashboard</a>
+            <div class="vft-header-copy">
+                <h1>Vehicle Fuel Top-Up</h1>
+                <p>Manage TOM card balance adjustments for vehicles.</p>
             </div>
-        </div>
+        </header>
 
-        <!-- Alert Message -->
-        <?php if ($message): ?>
-            <div class="alert alert-<?php echo $messageType; ?>">
-                <i class="fas fa-<?php echo $messageType === 'success' ? 'check-circle' : 'exclamation-circle'; ?>"></i>
-                <?php echo htmlspecialchars($message); ?>
+        <?php if ($message !== ''): ?>
+            <div class="vft-alert vft-alert-<?php echo topup_h($messageType); ?>" role="status">
+                <?php echo topup_h($message); ?>
             </div>
         <?php endif; ?>
 
-        <!-- Statistics -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-icon">
-                    <i class="fas fa-car"></i>
-                </div>
-                <div class="stat-label">
-                    <?php if (!$is_super_admin): ?>Your Facility's <?php endif; ?>Vehicles
-                </div>
-                <div class="stat-value"><?php echo count($vehicles); ?></div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">
-                    <i class="fas fa-money-bill-wave"></i>
-                </div>
-                <div class="stat-label">
-                    <?php if (!$is_super_admin): ?>Your Facility's <?php endif; ?>Total Float Balance
-                </div>
-                <div class="stat-value" style="font-size: 24px;">K <?php echo number_format($total_balance, 2); ?></div>
-            </div>
-        </div>
+        <section class="vft-summary-grid" aria-label="Balance summary">
+            <article class="vft-summary-card">
+                <span class="vft-summary-label">Vehicles in Scope</span>
+                <strong class="vft-summary-value"><?php echo topup_h((string) count($vehicles)); ?></strong>
+                <span class="vft-summary-meta">Available for balance adjustment</span>
+            </article>
+            <article class="vft-summary-card">
+                <span class="vft-summary-label">Total Float Balance</span>
+                <strong class="vft-summary-value vft-summary-value-balance"><?php echo topup_h(topup_currency((float) $total_balance)); ?></strong>
+                <span class="vft-summary-meta">Combined balance for vehicles in scope</span>
+            </article>
+        </section>
 
-        <!-- Adjustment Form -->
-        <div class="form-card">
-            <div class="form-title">
-                <i class="fas fa-sliders-h"></i> Top-Up Vehicle Fuel
+        <section class="vft-panel">
+            <div class="vft-panel-heading">
+                <h2>Balance Adjustment</h2>
+                <p>Choose the vehicle, decide whether you are adding or deducting balance, then record the reason and supporting document.</p>
             </div>
+            <?php if (!empty($vehicles)): ?>
+                <form method="POST" action="" enctype="multipart/form-data" id="topupForm">
+                    <section class="vft-section">
+                        <div class="vft-section-heading">
+                            <h3>Transaction Details</h3>
+                            <p>Capture the vehicle, transaction type, and amount first.</p>
+                        </div>
 
-            <?php if (count($vehicles) > 0): ?>
-            <form method="POST" action="" enctype="multipart/form-data" id="adjustmentForm">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>
-                            <i class="fas fa-car"></i> Select Vehicle <span class="required">*</span>
-                        </label>
-                        <select name="vehicle_id" id="vehicle_select" required onchange="updateCalculator()">
-                            <option value="">Select Vehicle</option>
-                            <?php foreach ($vehicles as $vehicle): ?>
-                                <option value="<?php echo $vehicle['id']; ?>" 
-                                        data-balance="<?php echo $vehicle['float_balance']; ?>"
-                                        data-name="<?php echo htmlspecialchars($vehicle['vehicle_name']); ?>">
-                                    <?php echo htmlspecialchars($vehicle['vehicle_name'] . ' - ' . $vehicle['number_plate']); ?> 
-                                    (K <?php echo number_format($vehicle['float_balance'], 2); ?>)
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>
-                            <i class="fas fa-exchange-alt"></i> Transaction Type <span class="required">*</span>
-                        </label>
-                        <div class="radio-group">
-                            <div class="radio-option">
-                                <input type="radio" name="adjustment_type" value="addition" id="addition" checked onchange="updateCalculator()">
-                                <label for="addition" class="radio-label">
-                                    <i class="fas fa-plus-circle"></i> Add Fuel
-                                </label>
+                        <div class="vft-field-grid vft-field-grid-3">
+                            <div class="vft-field">
+                                <label class="vft-label" for="vehicle_select">Vehicle</label>
+                                <select class="vft-input" name="vehicle_id" id="vehicle_select" required>
+                                    <option value="">Select vehicle</option>
+                                    <?php foreach ($vehicles as $vehicle): ?>
+                                        <?php $vehicleId = (string) $vehicle['id']; ?>
+                                        <option
+                                            value="<?php echo topup_h($vehicleId); ?>"
+                                            data-vehicle="<?php echo topup_h(topup_vehicle_display($vehicle)); ?>"
+                                            data-facility="<?php echo topup_h($vehicle['facility_name']); ?>"
+                                            data-fuel-type="<?php echo topup_h(topup_fuel_type_label($vehicle['fuel_type'] ?? '')); ?>"
+                                            data-balance="<?php echo topup_h(number_format((float) $vehicle['float_balance'], 2, '.', '')); ?>"
+                                            data-account="<?php echo topup_h($vehicle['float_account_name']); ?>"
+                                            <?php echo $formData['vehicle_id'] === $vehicleId ? 'selected' : ''; ?>
+                                        >
+                                            <?php echo topup_h(topup_vehicle_display($vehicle)); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
                             </div>
-                            <div class="radio-option">
-                                <input type="radio" name="adjustment_type" value="deduction" id="deduction" onchange="updateCalculator()">
-                                <label for="deduction" class="radio-label">
-                                    <i class="fas fa-minus-circle"></i> Deduct Fuel
-                                </label>
+
+                            <div class="vft-field">
+                                <span class="vft-label">Transaction Type</span>
+                                <div class="vft-segmented" role="radiogroup" aria-label="Transaction Type">
+                                    <label class="vft-segment is-addition">
+                                        <input type="radio" name="adjustment_type" value="addition" <?php echo $formData['adjustment_type'] === 'addition' ? 'checked' : ''; ?>>
+                                        <span>Add Balance</span>
+                                    </label>
+                                    <label class="vft-segment is-deduction">
+                                        <input type="radio" name="adjustment_type" value="deduction" <?php echo $formData['adjustment_type'] === 'deduction' ? 'checked' : ''; ?>>
+                                        <span>Deduct Balance</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="vft-field">
+                                <label class="vft-label" for="amount">Amount (ZMW)</label>
+                                <div class="vft-input-wrap">
+                                    <span class="vft-prefix">K</span>
+                                    <input
+                                        class="vft-input vft-input-with-prefix"
+                                        type="number"
+                                        name="amount"
+                                        id="amount"
+                                        step="0.01"
+                                        min="0.01"
+                                        placeholder="e.g. 500.00"
+                                        value="<?php echo topup_h($formData['amount']); ?>"
+                                        required
+                                    >
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </div>
+                    </section>
 
-                <div class="form-group">
-                    <label>
-                        <i class="fas fa-money-bill-wave"></i> Amount (Kwacha) <span class="required">*</span>
-                    </label>
-                    <input 
-                        type="number" 
-                        name="amount" 
-                        id="amount" 
-                        step="0.01" 
-                        min="0.01" 
-                        placeholder="e.g., 500.00"
-                        required
-                        oninput="updateCalculator()"
-                    >
-                </div>
-
-                <!-- Live Calculator Preview -->
-                <div class="calculator-preview" id="calculatorPreview">
-                    <div class="calc-title">
-                        <i class="fas fa-calculator"></i> Calculation Preview
-                    </div>
-                    <div class="calc-equation">
-                        <span class="calc-current">K <span id="calcCurrent">0.00</span></span>
-                        <span class="calc-operator" id="calcOperator">+</span>
-                        <span class="calc-amount">K <span id="calcAmount">0.00</span></span>
-                        <span class="calc-equals">=</span>
-                        <span class="calc-result">K <span id="calcResult">0.00</span></span>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label>
-                        <i class="fas fa-comment-alt"></i> Reason <span class="required">*</span>
-                    </label>
-                    <textarea 
-                        name="reason" 
-                        placeholder="e.g., Fuel top-up from finance, Monthly allocation, Correction for error"
-                        required
-                    ></textarea>
-                </div>
-
-                <div class="form-group">
-                    <label>
-                        <i class="fas fa-paperclip"></i> Receipt/Approval Attachment (Optional)
-                    </label>
-                    <label for="attachment" class="file-upload-area" id="uploadArea">
-                        <div class="upload-icon">
-                            <i class="fas fa-cloud-upload-alt"></i>
+                    <section class="vft-section">
+                        <div class="vft-section-heading">
+                            <h3>Context and Explanation</h3>
+                            <p>Review the selected vehicle context and record why the balance is changing.</p>
                         </div>
-                        <div class="upload-text">Click to upload document</div>
-                        <div class="upload-hint">Support: JPG, PNG, PDF (Max 5MB)</div>
-                    </label>
-                    <input 
-                        type="file" 
-                        id="attachment" 
-                        name="attachment" 
-                        accept="image/*,.pdf"
-                        onchange="handleFileSelect(this)"
-                    >
-                    <div class="file-name-display" id="fileNameDisplay">
-                        <i class="fas fa-check-circle"></i>
-                        <span id="fileName"></span>
-                    </div>
-                </div>
 
-                <button type="submit" name="adjust_fuel" class="submit-btn">
-                    <i class="fas fa-save"></i>
-                    Submit Top-Up
-                </button>
-            </form>
+                        <div class="vft-context-placeholder" id="vehicleContextEmpty" <?php echo $selectedVehicle ? 'hidden' : ''; ?>>
+                            Select a vehicle to load the facility, fuel type, current balance, and card account.
+                        </div>
+
+                        <div class="vft-context-grid" id="vehicleContext" <?php echo $selectedVehicle ? '' : 'hidden'; ?>>
+                            <article class="vft-context-item">
+                                <span class="vft-context-label">Vehicle</span>
+                                <strong id="contextVehicle"><?php echo $selectedVehicle ? topup_h(topup_vehicle_display($selectedVehicle)) : '--'; ?></strong>
+                            </article>
+                            <article class="vft-context-item">
+                                <span class="vft-context-label">Facility</span>
+                                <strong id="contextFacility"><?php echo $selectedVehicle ? topup_h($selectedVehicle['facility_name']) : '--'; ?></strong>
+                            </article>
+                            <article class="vft-context-item">
+                                <span class="vft-context-label">Fuel Type</span>
+                                <strong id="contextFuelType"><?php echo $selectedVehicle ? topup_h(topup_fuel_type_label($selectedVehicle['fuel_type'] ?? '')) : '--'; ?></strong>
+                            </article>
+                            <article class="vft-context-item">
+                                <span class="vft-context-label">Current Balance</span>
+                                <strong id="contextBalance"><?php echo $selectedVehicle ? topup_h(topup_currency((float) $selectedVehicle['float_balance'])) : '--'; ?></strong>
+                            </article>
+                            <article class="vft-context-item">
+                                <span class="vft-context-label">Card Account</span>
+                                <strong id="contextAccount"><?php echo $selectedVehicle ? topup_h($selectedVehicle['float_account_name']) : '--'; ?></strong>
+                            </article>
+                        </div>
+
+                        <div class="vft-balance-preview" id="balancePreview" hidden>
+                            <span class="vft-balance-label">Balance Preview</span>
+                            <div class="vft-balance-equation">
+                                <span id="previewCurrent">K 0.00</span>
+                                <span class="vft-balance-operator" id="previewOperator">+</span>
+                                <span id="previewAmount">K 0.00</span>
+                                <span class="vft-balance-equals">=</span>
+                                <span class="vft-balance-result" id="previewResult">K 0.00</span>
+                            </div>
+                            <p class="vft-balance-note" id="balanceNote">Projected balance after this transaction.</p>
+                        </div>
+
+                        <div class="vft-field-grid vft-field-grid-2">
+                            <div class="vft-field">
+                                <label class="vft-label" for="reason_type">Reason Type</label>
+                                <select class="vft-input" name="reason_type" id="reason_type" required>
+                                    <?php foreach ($reasonOptions as $reasonKey => $reasonLabel): ?>
+                                        <option value="<?php echo topup_h($reasonKey); ?>" <?php echo $formData['reason_type'] === $reasonKey ? 'selected' : ''; ?>>
+                                            <?php echo topup_h($reasonLabel); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="vft-field vft-field-full">
+                                <label class="vft-label" for="notes">Notes</label>
+                                <textarea
+                                    class="vft-input vft-textarea"
+                                    name="notes"
+                                    id="notes"
+                                    placeholder="Add approval references, month, or any explanation that supports this adjustment."
+                                ><?php echo topup_h($formData['notes']); ?></textarea>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="vft-section">
+                        <div class="vft-section-heading">
+                            <h3>Attachment</h3>
+                            <p>Upload an approval, receipt, or supporting document if one is available.</p>
+                        </div>
+
+                        <div class="vft-upload-shell" id="uploadShell">
+                            <label for="attachment" class="vft-upload-trigger">Choose File</label>
+                            <div class="vft-upload-copy">
+                                <strong id="fileName">No file selected</strong>
+                                <span>PDF, JPG, PNG up to 5MB</span>
+                            </div>
+                        </div>
+                        <input
+                            class="vft-file-input"
+                            type="file"
+                            id="attachment"
+                            name="attachment"
+                            accept="image/*,.pdf"
+                        >
+                    </section>
+
+                    <section class="vft-section vft-section-actions">
+                        <button type="submit" name="adjust_fuel" class="vft-primary-button" id="submitButton">
+                            <?php echo $formData['adjustment_type'] === 'deduction' ? 'Save Deduction' : 'Save Addition'; ?>
+                        </button>
+                    </section>
+                </form>
             <?php else: ?>
-            <div class="empty-state" style="padding: 40px 20px;">
-                <i class="fas fa-car-slash"></i>
-                <h3 style="color: var(--gray-700); margin: 15px 0 10px 0;">No Vehicles Available</h3>
-                <p>There are no vehicles in <?php echo $is_super_admin ? 'the system' : 'your facility'; ?> yet.</p>
-            </div>
+                <div class="vft-empty-state">
+                    <h3>No vehicles available</h3>
+                    <p>There are no vehicles in <?php echo topup_h(strtolower($facility_display)); ?> yet, so no balance transaction can be recorded here.</p>
+                </div>
             <?php endif; ?>
-        </div>
+        </section>
 
-        <!-- Top-Up History -->
-        <div class="history-card">
-            <div class="history-title">
-                <i class="fas fa-history"></i> Top-Up History
-                <?php if (!$is_super_admin): ?>
-                    <span style="font-size: 14px; font-weight: 600; color: var(--gray-600);">(Your Facility)</span>
-                <?php endif; ?>
+        <section class="vft-panel">
+            <div class="vft-panel-heading vft-panel-heading-split">
+                <div>
+                    <h2>Transaction History</h2>
+                    <p>Review recent balance movements with compact audit details and optional filters.</p>
+                </div>
+
+                <form method="GET" class="vft-history-toolbar">
+                    <select class="vft-input" name="vehicle_filter">
+                        <option value="">All vehicles</option>
+                        <?php foreach ($vehicles as $vehicle): ?>
+                            <?php $vehicleId = (string) $vehicle['id']; ?>
+                            <option value="<?php echo topup_h($vehicleId); ?>" <?php echo $historyVehicleFilter === $vehicleId ? 'selected' : ''; ?>>
+                                <?php echo topup_h(topup_vehicle_display($vehicle)); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+
+                    <select class="vft-input" name="transaction_filter">
+                        <option value="all" <?php echo $historyTransactionFilter === 'all' ? 'selected' : ''; ?>>All transactions</option>
+                        <option value="addition" <?php echo $historyTransactionFilter === 'addition' ? 'selected' : ''; ?>>Add Balance</option>
+                        <option value="deduction" <?php echo $historyTransactionFilter === 'deduction' ? 'selected' : ''; ?>>Deduct Balance</option>
+                        <option value="adjustment" <?php echo $historyTransactionFilter === 'adjustment' ? 'selected' : ''; ?>>Adjustment</option>
+                    </select>
+
+                    <input class="vft-input" type="date" name="date_from" value="<?php echo topup_h($historyDateFrom); ?>">
+                    <input class="vft-input" type="date" name="date_to" value="<?php echo topup_h($historyDateTo); ?>">
+
+                    <button type="submit" class="vft-secondary-button">Apply</button>
+                    <a href="fuel_topup.php" class="vft-clear-link">Clear</a>
+                </form>
             </div>
-            
-            <?php if (count($adjustmentHistory) > 0): ?>
-                <div class="table-container">
-                    <table class="history-table">
+
+            <?php if (!empty($adjustmentHistory)): ?>
+                <div class="vft-table-wrap">
+                    <table class="vft-history-table">
                         <thead>
                             <tr>
-                                <th><i class="fas fa-calendar"></i> Date & Time</th>
-                                <th><i class="fas fa-car"></i> Vehicle</th>
-                                <th><i class="fas fa-exchange-alt"></i> Type</th>
-                                <th><i class="fas fa-money-bill-wave"></i> Amount (K)</th>
-                                <th><i class="fas fa-chart-line"></i> New Balance (K)</th>
-                                <th><i class="fas fa-comment"></i> Reason</th>
-                                <th><i class="fas fa-user"></i> By</th>
-                                <th><i class="fas fa-paperclip"></i> Attachment</th>
+                                <th>Date &amp; Time</th>
+                                <th>Vehicle</th>
+                                <th>Transaction</th>
+                                <th class="is-currency">Amount (K)</th>
+                                <th class="is-currency">New Balance (K)</th>
+                                <th>Reason</th>
+                                <th>Recorded By</th>
+                                <th>Attachment</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($adjustmentHistory as $history): ?>
-                            <tr>
-                                <td><?php echo date('d M Y H:i', strtotime($history['created_at'])); ?></td>
-                                <td>
-                                    <?php echo htmlspecialchars($history['float_account']); ?>
-                                    <?php if ($is_super_admin && isset($history['facility_name'])): ?>
-                                        <br><span class="facility-tag"><i class="fas fa-building"></i> <?php echo htmlspecialchars($history['facility_name']); ?></span>
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    <span class="badge badge-<?php echo $history['transaction_type']; ?>">
-                                        <i class="fas fa-<?php echo $history['transaction_type'] === 'addition' ? 'plus' : 'minus'; ?>-circle"></i>
-                                        <?php echo ucfirst($history['transaction_type']); ?>
-                                    </span>
-                                </td>
-                                <td><?php echo number_format($history['amount'], 2); ?></td>
-                                <td><strong><?php echo number_format($history['new_balance'], 2); ?></strong></td>
-                                <td><?php echo htmlspecialchars($history['reason']); ?></td>
-                                <td><?php echo htmlspecialchars($history['created_by']); ?></td>
-                                <td>
-                                    <?php if ($history['photo_data']): ?>
-                                        <a href="view_adjustment_photo.php?id=<?php echo $history['id']; ?>" target="_blank" class="view-btn">
-                                            <i class="fas fa-eye"></i> View
-                                        </a>
-                                    <?php else: ?>
-                                        <span style="color: var(--gray-400);">-</span>
-                                    <?php endif; ?>
-                                </td>
-                            </tr>
+                                <?php
+                                $vehicleLabel = trim((string) ($history['vehicle_name'] ?? '')) !== ''
+                                    ? topup_vehicle_display($history)
+                                    : trim((string) ($history['float_account'] ?? 'Unknown vehicle'));
+                                $transactionType = (string) ($history['transaction_type'] ?? 'adjustment');
+                                ?>
+                                <tr>
+                                    <td><?php echo topup_h(date('d M Y, H:i', strtotime((string) $history['created_at']))); ?></td>
+                                    <td>
+                                        <div class="vft-table-primary"><?php echo topup_h($vehicleLabel); ?></div>
+                                        <?php if (!empty($history['facility_name'])): ?>
+                                            <div class="vft-table-meta"><?php echo topup_h($history['facility_name']); ?></div>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <span class="vft-badge <?php echo topup_h(topup_transaction_class($transactionType)); ?>">
+                                            <?php echo topup_h(topup_transaction_label($transactionType)); ?>
+                                        </span>
+                                    </td>
+                                    <td class="is-currency"><?php echo topup_h(topup_currency((float) $history['amount'])); ?></td>
+                                    <td class="is-currency is-strong"><?php echo topup_h(topup_currency((float) $history['new_balance'])); ?></td>
+                                    <td>
+                                        <div class="vft-reason-copy"><?php echo topup_h((string) $history['reason']); ?></div>
+                                    </td>
+                                    <td><?php echo topup_h((string) $history['created_by']); ?></td>
+                                    <td>
+                                        <?php if (!empty($history['photo_data'])): ?>
+                                            <a href="view_adjustment_photo.php?id=<?php echo topup_h((string) $history['id']); ?>" target="_blank" class="vft-attachment-link">View</a>
+                                        <?php else: ?>
+                                            <span class="vft-table-muted">-</span>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
+                <?php if ($historyTotalItems > 0): ?>
+                    <div class="vft-pagination">
+                        <div class="vft-pagination-summary">
+                            Showing <?php echo topup_h((string) $historyFromItem); ?> to <?php echo topup_h((string) $historyToItem); ?> of <?php echo topup_h((string) $historyTotalItems); ?> transactions
+                        </div>
+                        <?php if ($historyTotalPages > 1): ?>
+                            <nav class="vft-pagination-links" aria-label="History pagination">
+                                <?php if ($historyPage > 1): ?>
+                                    <a class="vft-page-link" href="<?php echo topup_h(topup_history_page_url($historyPage - 1, $historyVehicleFilter, $historyTransactionFilter, $historyDateFrom, $historyDateTo)); ?>">Previous</a>
+                                <?php endif; ?>
+
+                                <?php for ($page = $historyPageStart; $page <= $historyPageEnd; $page++): ?>
+                                    <a
+                                        class="vft-page-link <?php echo $page === $historyPage ? 'is-active' : ''; ?>"
+                                        href="<?php echo topup_h(topup_history_page_url($page, $historyVehicleFilter, $historyTransactionFilter, $historyDateFrom, $historyDateTo)); ?>"
+                                    >
+                                        <?php echo topup_h((string) $page); ?>
+                                    </a>
+                                <?php endfor; ?>
+
+                                <?php if ($historyPage < $historyTotalPages): ?>
+                                    <a class="vft-page-link" href="<?php echo topup_h(topup_history_page_url($historyPage + 1, $historyVehicleFilter, $historyTransactionFilter, $historyDateFrom, $historyDateTo)); ?>">Next</a>
+                                <?php endif; ?>
+                            </nav>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
             <?php else: ?>
-                <div class="empty-state">
-                    <i class="fas fa-clipboard-list"></i>
-                    <p style="font-weight: 600; color: var(--gray-700); margin-top: 10px;">No top-up history yet</p>
-                    <p style="font-size: 14px; margin-top: 5px;">
-                        Top-up transactions<?php echo !$is_super_admin ? ' for your facility' : ''; ?> will appear here once you start managing vehicle fuel
-                    </p>
+                <div class="vft-empty-state">
+                    <h3>No transactions found</h3>
+                    <p>Balance adjustments will appear here once you start managing TOM card balances.</p>
                 </div>
             <?php endif; ?>
-        </div>
+        </section>
     </div>
-
     <script>
-        function updateCalculator() {
-            const vehicleSelect = document.getElementById('vehicle_select');
-            const amountInput = document.getElementById('amount');
-            const additionRadio = document.getElementById('addition');
-            const calculatorPreview = document.getElementById('calculatorPreview');
-            
-            const selectedOption = vehicleSelect.options[vehicleSelect.selectedIndex];
-            const currentBalance = parseFloat(selectedOption.getAttribute('data-balance')) || 0;
-            const amount = parseFloat(amountInput.value) || 0;
-            const isAddition = additionRadio.checked;
-            
-            if (vehicleSelect.value && amount > 0) {
-                // Calculate with proper precision
-                const result = isAddition 
-                    ? Math.round((currentBalance + amount) * 100) / 100 
-                    : Math.round((currentBalance - amount) * 100) / 100;
-                
-                // Update display
-                document.getElementById('calcCurrent').textContent = currentBalance.toFixed(2);
-                document.getElementById('calcOperator').textContent = isAddition ? '+' : '-';
-                document.getElementById('calcOperator').style.color = isAddition ? '#10b981' : '#ef4444';
-                document.getElementById('calcAmount').textContent = amount.toFixed(2);
-                document.getElementById('calcResult').textContent = result.toFixed(2);
-                
-                const calcResultElement = document.querySelector('.calc-result');
-                calcResultElement.className = isAddition ? 'calc-result' : 'calc-result deduction';
-                
-                calculatorPreview.classList.add('show');
-            } else {
-                calculatorPreview.classList.remove('show');
+        function getSelectedVehicleOption() {
+            const select = document.getElementById('vehicle_select');
+            if (!select || !select.value) {
+                return null;
             }
+
+            return select.options[select.selectedIndex];
+        }
+
+        function getSelectedTransactionType() {
+            const selected = document.querySelector('input[name="adjustment_type"]:checked');
+            return selected ? selected.value : 'addition';
+        }
+
+        function formatCurrency(amount) {
+            return 'K ' + Number(amount).toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
+
+        function updateVehicleContext() {
+            const option = getSelectedVehicleOption();
+            const emptyState = document.getElementById('vehicleContextEmpty');
+            const context = document.getElementById('vehicleContext');
+
+            if (!option) {
+                emptyState.hidden = false;
+                context.hidden = true;
+                return;
+            }
+
+            emptyState.hidden = true;
+            context.hidden = false;
+
+            document.getElementById('contextVehicle').textContent = option.dataset.vehicle || '--';
+            document.getElementById('contextFacility').textContent = option.dataset.facility || '--';
+            document.getElementById('contextFuelType').textContent = option.dataset.fuelType || '--';
+            document.getElementById('contextBalance').textContent = formatCurrency(option.dataset.balance || 0);
+            document.getElementById('contextAccount').textContent = option.dataset.account || '--';
+        }
+
+        function updateSubmitButton() {
+            const button = document.getElementById('submitButton');
+            if (!button) {
+                return;
+            }
+
+            const type = getSelectedTransactionType();
+            button.textContent = type === 'deduction' ? 'Save Deduction' : 'Save Addition';
+        }
+
+        function updateBalancePreview() {
+            const option = getSelectedVehicleOption();
+            const amountInput = document.getElementById('amount');
+            const preview = document.getElementById('balancePreview');
+            const transactionType = getSelectedTransactionType();
+            const amount = parseFloat(amountInput.value || '0');
+
+            if (!preview) {
+                return;
+            }
+
+            if (!option || !amount || amount <= 0) {
+                preview.hidden = true;
+                return;
+            }
+
+            const currentBalance = parseFloat(option.dataset.balance || '0');
+            const projectedBalance = transactionType === 'addition'
+                ? currentBalance + amount
+                : currentBalance - amount;
+
+            document.getElementById('previewCurrent').textContent = formatCurrency(currentBalance);
+            document.getElementById('previewAmount').textContent = formatCurrency(amount);
+            document.getElementById('previewOperator').textContent = transactionType === 'addition' ? '+' : '-';
+            document.getElementById('previewResult').textContent = formatCurrency(projectedBalance);
+
+            preview.classList.toggle('is-addition', transactionType === 'addition');
+            preview.classList.toggle('is-deduction', transactionType === 'deduction');
+
+            if (projectedBalance < 0) {
+                document.getElementById('balanceNote').textContent = 'This deduction would result in a negative balance and will not save.';
+            } else {
+                document.getElementById('balanceNote').textContent = 'Projected balance after this transaction.';
+            }
+
+            preview.hidden = false;
         }
 
         function handleFileSelect(input) {
-            const uploadArea = document.getElementById('uploadArea');
-            const fileNameDisplay = document.getElementById('fileNameDisplay');
+            const shell = document.getElementById('uploadShell');
             const fileName = document.getElementById('fileName');
-            
-            if (input.files && input.files[0]) {
-                const file = input.files[0];
-                const fileSize = file.size / 1024 / 1024;
-                
-                if (fileSize > 5) {
-                    alert('File size must be less than 5MB');
-                    input.value = '';
-                    return;
-                }
-                
-                uploadArea.classList.add('has-file');
-                fileNameDisplay.classList.add('show');
-                fileName.textContent = file.name;
-                
-                uploadArea.querySelector('.upload-icon i').className = 'fas fa-check-circle';
-                uploadArea.querySelector('.upload-text').textContent = 'Document uploaded successfully';
+
+            if (!shell || !fileName) {
+                return;
             }
+
+            if (!input.files || !input.files[0]) {
+                shell.classList.remove('has-file');
+                fileName.textContent = 'No file selected';
+                return;
+            }
+
+            const file = input.files[0];
+            const sizeInMb = file.size / 1024 / 1024;
+
+            if (sizeInMb > 5) {
+                alert('File size must be less than 5MB.');
+                input.value = '';
+                shell.classList.remove('has-file');
+                fileName.textContent = 'No file selected';
+                return;
+            }
+
+            shell.classList.add('has-file');
+            fileName.textContent = file.name;
         }
 
-        // Auto-hide alert after 5 seconds
-        <?php if ($message): ?>
-            setTimeout(() => {
-                const alert = document.querySelector('.alert');
-                if (alert) {
-                    alert.style.animation = 'slideDown 0.3s reverse';
-                    setTimeout(() => alert.remove(), 300);
-                }
-            }, 5000);
+        const vehicleSelect = document.getElementById('vehicle_select');
+        const amountInput = document.getElementById('amount');
+        const attachmentInput = document.getElementById('attachment');
+
+        if (vehicleSelect) {
+            vehicleSelect.addEventListener('change', function () {
+                updateVehicleContext();
+                updateBalancePreview();
+            });
+        }
+
+        document.querySelectorAll('input[name="adjustment_type"]').forEach((input) => {
+            input.addEventListener('change', function () {
+                updateSubmitButton();
+                updateBalancePreview();
+            });
+        });
+
+        if (amountInput) {
+            amountInput.addEventListener('input', updateBalancePreview);
+        }
+
+        if (attachmentInput) {
+            attachmentInput.addEventListener('change', function () {
+                handleFileSelect(this);
+            });
+        }
+
+        updateVehicleContext();
+        updateSubmitButton();
+        updateBalancePreview();
+
+        <?php if ($message !== ''): ?>
+        window.setTimeout(function () {
+            const alert = document.querySelector('.vft-alert');
+            if (alert) {
+                alert.remove();
+            }
+        }, 5000);
         <?php endif; ?>
     </script>
 </body>
