@@ -307,7 +307,7 @@ switch ($reportType) {
         break;
         
     case 'user_consumption':
-        $reportTitle = 'User Fuel Consumption';
+        $reportTitle = 'Driver Fuel Consumption';
         $query = "
             SELECT u.name, f.facility_name,
                    COUNT(r.id) as trip_count,
@@ -577,7 +577,7 @@ if (!empty($reportStats)) {
         case 'user_consumption':
             $html .= '
                 <div class="summary-item">
-                    <div class="summary-label">Total ' . ($reportType === 'vehicle_consumption' ? 'Vehicles' : 'Users') . '</div>
+                    <div class="summary-label">Total ' . ($reportType === 'vehicle_consumption' ? 'Vehicles' : 'Drivers') . '</div>
                     <div class="summary-value">' . $reportStats['total_' . ($reportType === 'vehicle_consumption' ? 'vehicles' : 'users')] . '</div>
                 </div>
                 <div class="summary-item">
@@ -610,7 +610,7 @@ if ($reportType === 'vehicle_activity') {
             <div class="activity-grid">
                 <div class="activity-row">
                     <div class="activity-cell">
-                        <div class="field-label">Staff/Driver</div>
+                        <div class="field-label">Driver</div>
                         <div class="field-value">' . htmlspecialchars($row['staff_name']) . '</div>
                     </div>
                     <div class="activity-cell">
@@ -712,7 +712,7 @@ if ($reportType === 'vehicle_activity') {
             $html .= '<th>Vehicle</th><th>Facility</th><th>Trips</th><th>Total Liters</th><th>Avg/Trip</th><th>Total Cost</th>';
             break;
         case 'user_consumption':
-            $html .= '<th>User</th><th>Facility</th><th>Trips</th><th>Total Liters</th><th>Avg/Trip</th><th>Total Cost</th>';
+            $html .= '<th>Driver</th><th>Facility</th><th>Trips</th><th>Total Liters</th><th>Avg/Trip</th><th>Total Cost</th>';
             break;
     }
     

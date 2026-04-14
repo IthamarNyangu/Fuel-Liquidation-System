@@ -1236,7 +1236,7 @@ switch ($reportType) {
                 </a>
                 <a href="?type=user_consumption&start_date=<?php echo $startDate; ?>&end_date=<?php echo $endDate; ?><?php echo $selectedFacility ? '&facility_id='.$selectedFacility : ''; ?>" 
                    class="tab-btn <?php echo $reportType === 'user_consumption' ? 'active' : ''; ?>">
-                    <i class="fas fa-users"></i> User Consumption
+                    <i class="fas fa-users"></i> Driver Consumption
                 </a>
             </div>
         </div>
@@ -1290,9 +1290,9 @@ switch ($reportType) {
 
                     <?php if (in_array($reportType, ['vehicle_activity', 'user_consumption'])): ?>
                     <div class="filter-group">
-                        <label><i class="fas fa-user"></i> User</label>
+                        <label><i class="fas fa-user"></i> Driver</label>
                         <select name="user_id">
-                            <option value="">All Users</option>
+                            <option value="">All Drivers</option>
                             <?php foreach ($users as $user): ?>
                                 <option value="<?php echo $user['id']; ?>" <?php echo $selectedUser == $user['id'] ? 'selected' : ''; ?>>
                                     <?php echo htmlspecialchars($user['name']); ?>
@@ -1450,7 +1450,7 @@ switch ($reportType) {
                     ?>
                     <div class="stat-card">
                         <div class="stat-icon"><i class="fas fa-<?php echo $reportType === 'vehicle_consumption' ? 'car' : 'users'; ?>"></i></div>
-                        <div class="stat-label">Total <?php echo $reportType === 'vehicle_consumption' ? 'Vehicles' : 'Users'; ?></div>
+                        <div class="stat-label">Total <?php echo $reportType === 'vehicle_consumption' ? 'Vehicles' : 'Drivers'; ?></div>
                         <div class="stat-value"><?php echo $reportStats['total_' . ($reportType === 'vehicle_consumption' ? 'vehicles' : 'users')]; ?></div>
                     </div>
                     <div class="stat-card">
@@ -1465,7 +1465,7 @@ switch ($reportType) {
                     </div>
                     <div class="stat-card">
                         <div class="stat-icon"><i class="fas fa-chart-bar"></i></div>
-                        <div class="stat-label">Average Per <?php echo $reportType === 'vehicle_consumption' ? 'Vehicle' : 'User'; ?></div>
+                        <div class="stat-label">Average Per <?php echo $reportType === 'vehicle_consumption' ? 'Vehicle' : 'Driver'; ?></div>
                         <div class="stat-value"><?php echo number_format($reportStats['avg_per_' . ($reportType === 'vehicle_consumption' ? 'vehicle' : 'user')], 2); ?> L</div>
                     </div>
                     <?php
@@ -1501,7 +1501,7 @@ switch ($reportType) {
                     'float_adjustments' => 'Float Adjustment History',
                     'vehicle_activity' => 'Vehicle Activity Report (Requisitions & Logbook)',
                     'vehicle_consumption' => 'Vehicle Fuel Consumption',
-                    'user_consumption' => 'User Fuel Consumption'
+                    'user_consumption' => 'Driver Fuel Consumption'
                 ];
                 echo $titles[$reportType] ?? 'Report';
                 ?>
@@ -1533,7 +1533,7 @@ switch ($reportType) {
                                     case 'vehicle_activity':
                                         echo '<th><i class="fas fa-tag"></i> Type</th>';
                                         echo '<th><i class="fas fa-calendar"></i> Date</th>';
-                                        echo '<th><i class="fas fa-user"></i> Staff/Driver</th>';
+                                        echo '<th><i class="fas fa-user"></i> Driver</th>';
                                         echo '<th><i class="fas fa-car"></i> Vehicle</th>';
                                         if (count($accessibleFacilities) > 1) {
                                             echo '<th><i class="fas fa-building"></i> Facility</th>';
@@ -1555,7 +1555,7 @@ switch ($reportType) {
                                         echo '<th><i class="fas fa-money-bill-wave"></i> Total Cost (K)</th>';
                                         break;
                                     case 'user_consumption':
-                                        echo '<th><i class="fas fa-user"></i> User</th>';
+                                        echo '<th><i class="fas fa-user"></i> Driver</th>';
                                         if (count($accessibleFacilities) > 1) {
                                             echo '<th><i class="fas fa-building"></i> Facility</th>';
                                         }

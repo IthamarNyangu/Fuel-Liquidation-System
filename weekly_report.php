@@ -57,12 +57,12 @@ foreach ($requisitions as $req) {
 }
 
 // Get user name for display
-$userName = "All Users";
+$userName = "All Drivers";
 if ($selectedUser) {
     $userStmt = $pdo->prepare("SELECT name FROM users WHERE id = ?");
     $userStmt->execute([$selectedUser]);
     $userData = $userStmt->fetch(PDO::FETCH_ASSOC);
-    $userName = $userData['name'] ?? "Unknown User";
+    $userName = $userData['name'] ?? "Unknown Driver";
 }
 ?>
 
@@ -102,9 +102,9 @@ if ($selectedUser) {
             <!-- Filters -->
             <form method="GET" class="filters">
                 <div class="filter-group">
-                    <label><i class="fas fa-user"></i> User/Driver</label>
+                    <label><i class="fas fa-user"></i> Driver</label>
                     <select name="user_id">
-                        <option value="">All Users</option>
+                        <option value="">All Drivers</option>
                         <?php foreach ($users as $user): ?>
                             <option value="<?php echo $user['id']; ?>" 
                                     <?php echo $selectedUser == $user['id'] ? 'selected' : ''; ?>>

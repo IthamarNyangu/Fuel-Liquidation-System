@@ -377,15 +377,15 @@ $assignedVehicleCount = count($assignedVehicles);
                 <input type="hidden" name="request_date" value="<?php echo $currentDate; ?>">
                 <input type="hidden" name="request_time" value="<?php echo $currentTime; ?>">
 
-                <!-- Staff & Account Section -->
+                <!-- Driver & Account Section -->
                 <div class="form-section">
                     <div class="section-title">
-                        <i class="fas fa-user-circle"></i> Staff & Account Information
+                        <i class="fas fa-user-circle"></i> Driver & Account Information
                     </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label>
-                                <i class="fas fa-user"></i> Staff Member <span class="auto-filled"></span>
+                                <i class="fas fa-user"></i> Driver <span class="auto-filled"></span>
                             </label>
                             <input 
                                 type="text" 

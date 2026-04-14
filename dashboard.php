@@ -712,7 +712,7 @@ if ($is_super_admin) {
                                     
                                     <div class="filter-section">
                                         <div class="filter-group">
-                                            <label><i class="fas fa-user"></i> Staff/Driver</label>
+                                            <label><i class="fas fa-user"></i> Driver</label>
                                             <input type="text" name="staff" placeholder="Search by name" value="<?php echo htmlspecialchars($filterStaff); ?>">
                                         </div>
                                         <div class="filter-group">
@@ -1123,7 +1123,7 @@ if ($is_super_admin) {
             modalInfo.innerHTML = `
                 <div class="modal-info-grid">
                     <div class="modal-info-item">
-                        <div class="modal-info-label">Staff</div>
+                        <div class="modal-info-label">Driver</div>
                         <div class="modal-info-value"><i class="fas fa-user"></i> ${data.staff_name}</div>
                     </div>
                     <div class="modal-info-item">

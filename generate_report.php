@@ -173,7 +173,7 @@ function generateVehicleUsageReport($pdo, $month, $year, $format, $monthNames) {
     }
 }
 
-// 3. Staff Fuel Requisition Report
+// 3. Driver Fuel Requisition Report
 function generateStaffRequisitionReport($pdo, $month, $year, $format, $monthNames) {
     $whereClause = "WHERE 1=1";
     $params = [];
@@ -205,16 +205,16 @@ function generateStaffRequisitionReport($pdo, $month, $year, $format, $monthName
     $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     $periodText = $month && $year ? $monthNames[$month] . " $year" : ($year ? "Year $year" : "All Time");
-    $reportTitle = "Staff Fuel Requisition Report - $periodText";
+    $reportTitle = "Driver Fuel Requisition Report - $periodText";
     
     if ($format === 'excel') {
         exportToExcel($data, $reportTitle, [
-            'Staff Name', 'Total Requests', 'Approved', 'Rejected', 'Pending', 
+            'Driver Name', 'Total Requests', 'Approved', 'Rejected', 'Pending', 
             'Total Fuel (L)', 'Total Cost (ZMW)'
         ]);
     } else {
         exportToPDF($data, $reportTitle, [
-            'Staff', 'Requests', 'Approved', 'Rejected', 'Pending', 'Fuel (L)', 'Cost'
+            'Driver', 'Requests', 'Approved', 'Rejected', 'Pending', 'Fuel (L)', 'Cost'
         ]);
     }
 }
@@ -379,11 +379,11 @@ function generateCostAnalysisReport($pdo, $month, $year, $format, $monthNames) {
     
     if ($format === 'excel') {
         exportToExcel($data, $reportTitle, [
-            'Date', 'Price/L (ZMW)', 'Staff', 'Vehicle', 'Amount (L)', 'Total Cost (ZMW)'
+            'Date', 'Price/L (ZMW)', 'Driver', 'Vehicle', 'Amount (L)', 'Total Cost (ZMW)'
         ], $summary);
     } else {
         exportToPDF($data, $reportTitle, [
-            'Date', 'Price/L', 'Staff', 'Vehicle', 'Fuel (L)', 'Cost'
+            'Date', 'Price/L', 'Driver', 'Vehicle', 'Fuel (L)', 'Cost'
         ]);
     }
 }

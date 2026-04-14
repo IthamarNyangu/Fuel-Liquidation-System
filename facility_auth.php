@@ -109,7 +109,7 @@ function getRoleDisplayName() {
         case 'admin':
             return 'Administrator';
         case 'staff':
-            return 'Staff Member';
+            return 'Driver';
         default:
             return 'User';
     }

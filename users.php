@@ -38,6 +38,14 @@ $messageType = '';
 // Default password for resets
 $DEFAULT_PASSWORD = 'Password123!';
 
+function users_role_label(string $role): string {
+    if ($role === 'staff') {
+        return 'Driver';
+    }
+
+    return ucwords(str_replace('_', ' ', $role));
+}
+
 // Handle Add User
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
     try {
@@ -908,7 +916,7 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
                 <div class="stat-icon">
                     <i class="fas fa-user"></i>
                 </div>
-                <div class="stat-label">Staff Members</div>
+                <div class="stat-label">Drivers</div>
                 <div class="stat-value"><?php echo $staff_count; ?></div>
             </div>
         </div>
@@ -956,7 +964,7 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
                                     ?>
                                     <span class="badge <?php echo $roleClass; ?>">
                                         <i class="fas fa-<?php echo $roleIcon; ?>"></i>
-                                        <?php echo ucwords(str_replace('_', ' ', $user['role'])); ?>
+                                        <?php echo users_role_label((string) $user['role']); ?>
                                     </span>
                                 </td>
                                 <?php if ($is_super_admin): ?>
@@ -1031,7 +1039,7 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
                             <?php endif; ?>
                             <option value="admin">Admin</option>
                             <option value="facility_admin">Facility Admin</option>
-                            <option value="staff">Staff</option>
+                            <option value="staff">Driver</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -1078,7 +1086,7 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
                             <?php endif; ?>
                             <option value="admin">Admin</option>
                             <option value="facility_admin">Facility Admin</option>
-                            <option value="staff">Staff</option>
+                            <option value="staff">Driver</option>
                         </select>
                     </div>
                     <div class="form-group">

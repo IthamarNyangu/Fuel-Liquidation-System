@@ -114,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $result = $check_stmt->get_result()->fetch_assoc();
                     
                     if ($result['user_count'] > 0 || $result['vehicle_count'] > 0) {
-                        throw new Exception("Cannot delete facility with associated users or vehicles. Please reassign them first.");
+                        throw new Exception("Cannot delete facility with associated accounts or vehicles. Please reassign them first.");
                     }
                     
                     $stmt = $conn->prepare("DELETE FROM facilities WHERE id = ?");
@@ -958,7 +958,7 @@ $inactive_facilities = $total_facilities - $active_facilities;
                                     <td>
                                         <div style="display: flex; flex-direction: column; gap: 5px;">
                                             <span class="stat-badge">
-                                                <i class="fas fa-users"></i> <?php echo $facility['total_users']; ?> Users
+                                                <i class="fas fa-users"></i> <?php echo $facility['total_users']; ?> Accounts
                                             </span>
                                             <span class="stat-badge">
                                                 <i class="fas fa-car"></i> <?php echo $facility['total_vehicles']; ?> Vehicles

@@ -312,7 +312,7 @@ switch ($reportType) {
         break;
         
     case 'user_consumption':
-        $reportTitle = 'User Fuel Consumption';
+        $reportTitle = 'Driver Fuel Consumption';
         $query = "
             SELECT u.name, f.facility_name,
                    COUNT(r.id) as trip_count,
@@ -424,7 +424,7 @@ if (!empty($reportStats)) {
             
         case 'vehicle_consumption':
         case 'user_consumption':
-            $sheet->setCellValue('A' . $currentRow, 'Total ' . ($reportType === 'vehicle_consumption' ? 'Vehicles:' : 'Users:'));
+            $sheet->setCellValue('A' . $currentRow, 'Total ' . ($reportType === 'vehicle_consumption' ? 'Vehicles:' : 'Drivers:'));
             $sheet->setCellValue('B' . $currentRow, $reportStats['total_' . ($reportType === 'vehicle_consumption' ? 'vehicles' : 'users')]);
             $sheet->setCellValue('C' . $currentRow, 'Total Consumption:');
             $sheet->setCellValue('D' . $currentRow, number_format($reportStats['total_consumption'], 2) . ' L');
@@ -447,7 +447,7 @@ if ($reportType === 'vehicle_activity') {
     $headers = [
         'A' => 'Type',
         'B' => 'Date',
-        'C' => 'Staff/Driver',
+        'C' => 'Driver',
         'D' => 'Vehicle',
         'E' => 'Facility',
         'F' => 'Activity/Purpose',
@@ -595,7 +595,7 @@ if ($reportType === 'vehicle_activity') {
             break;
         case 'user_consumption':
             $headers = [
-                'A' => 'User',
+                'A' => 'Driver',
                 'B' => 'Facility',
                 'C' => 'Trips',
                 'D' => 'Total Liters',

@@ -760,7 +760,7 @@ if ($has_vehicle_assignments) {
                     <td><?php echo htmlspecialchars($user['email']); ?></td>
                     <td>
                       <span class="badge badge-info">
-                        <?php echo ucfirst(htmlspecialchars($user['role'])); ?>
+                        <?php echo htmlspecialchars($user['role'] === 'staff' ? 'Driver' : ucwords(str_replace('_', ' ', $user['role']))); ?>
                       </span>
                     </td>
                     <td>
