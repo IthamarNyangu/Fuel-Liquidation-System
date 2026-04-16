@@ -210,6 +210,8 @@ function fleet_get_accessible_vehicles(PDO $pdo, array $user): array
             v.fuel_type,
             v.make,
             v.model,
+            v.float_balance,
+            v.float_account_name,
             v.current_mileage,
             v.opening_odometer_km,
             v.vehicle_status,
@@ -237,7 +239,6 @@ function fleet_get_accessible_vehicles(PDO $pdo, array $user): array
                 va.user_id IS NOT NULL
                 OR v.current_driver_id = :current_driver_id
             )
-            AND v.facility_id = :facility_id
             ORDER BY
                 CASE COALESCE(va.assignment_type, 'primary')
                     WHEN 'primary' THEN 0
@@ -248,7 +249,6 @@ function fleet_get_accessible_vehicles(PDO $pdo, array $user): array
                 v.number_plate
         ";
         $params[':current_driver_id'] = $user['id'];
-        $params[':facility_id'] = $user['facility_id'];
     }
 
     $stmt = $pdo->prepare($sql);
@@ -704,7 +704,6 @@ function fleet_render_shell_start(string $title, string $activeNav, array $user,
     }
     echo '</nav>';
     echo '<div class="workflow-sidebar-footer">';
-    echo '<a class="workflow-nav-link subtle" href="dashboard.php" title="Back to Dashboard"><i class="fas fa-arrow-left"></i><span>Back to Dashboard</span></a>';
     echo '<a class="workflow-nav-link subtle" href="logout.php" title="Logout"><i class="fas fa-sign-out-alt"></i><span>Logout</span></a>';
     echo '</div>';
     echo '</aside>';

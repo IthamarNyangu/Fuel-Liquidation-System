@@ -21,17 +21,31 @@
 .vm-header {
     padding: 24px 28px;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
     gap: 18px;
 }
 
 .vm-header-main {
+    position: relative;
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 18px;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
     flex: 1;
+}
+
+.vm-header-back {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.vm-title-block {
+    width: 100%;
+    padding: 0 200px;
+    text-align: center;
 }
 
 .vm-kicker,
@@ -97,21 +111,21 @@
     line-height: 1.2;
     text-decoration: none;
     cursor: pointer;
-    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
-}
-
-.vm-btn:hover {
-    transform: translateY(-1px);
+    transition: box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
 }
 
 .vm-btn-primary {
+    border-color: transparent;
     background: linear-gradient(135deg, var(--dark-red), var(--primary-red));
     color: #fff;
     box-shadow: 0 12px 24px rgba(53, 98, 124, 0.18);
 }
 
 .vm-btn-primary:hover {
-    box-shadow: 0 14px 26px rgba(53, 98, 124, 0.22);
+    border-color: var(--primary-red);
+    background: linear-gradient(135deg, #31566d, #3f728f);
+    color: #fff;
+    box-shadow: 0 12px 24px rgba(53, 98, 124, 0.18);
 }
 
 .vm-btn-secondary,
@@ -123,8 +137,9 @@
 
 .vm-btn-secondary:hover,
 .vm-btn-ghost:hover {
-    border-color: rgba(53, 98, 124, 0.28);
-    color: var(--gray-900);
+    border-color: var(--primary-red);
+    background: var(--light-red);
+    color: var(--primary-red);
 }
 
 .vm-stats {
@@ -885,6 +900,22 @@
     .vm-header,
     .vm-header-main {
         flex-direction: column;
+    }
+
+    .vm-header-main {
+        position: static;
+        min-height: 0;
+        align-items: stretch;
+    }
+
+    .vm-header-back {
+        position: static;
+        transform: none;
+    }
+
+    .vm-title-block {
+        padding: 0;
+        text-align: center;
     }
 
     .vm-scope-chip {

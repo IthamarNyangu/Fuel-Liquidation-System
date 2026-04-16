@@ -26,9 +26,8 @@ fleet_render_shell_start(
 if (!$selectedVehicle) {
     echo '<section class="panel empty-state">';
     echo '<div class="empty-state-icon"><i class="fas fa-car-side"></i></div>';
-    echo '<h2>No vehicle assignment found</h2>';
-    echo '<p>This account does not have an active vehicle assignment yet. Once a vehicle is assigned, this page will become the driver landing page for movement legs, fuel purchases, and weekly review.</p>';
-    echo '<div class="button-row"><a class="button-secondary" href="dashboard.php"><i class="fas fa-arrow-left"></i>Back to Dashboard</a></div>';
+    echo '<h2>No vehicle available</h2>';
+    echo '<p>No assigned vehicle could be loaded for this account right now. If a vehicle was just assigned, refresh this page and try again.</p>';
     echo '</section>';
     fleet_render_shell_end();
     exit();
@@ -85,9 +84,7 @@ $cardAccountStmt = $pdo->prepare("
         fuel_type
     FROM card_accounts
     WHERE vehicle_id = ?
-       OR (vehicle_id IS NULL AND facility_id = ?)
     ORDER BY
-        CASE WHEN vehicle_id = ? THEN 0 ELSE 1 END,
         CASE status
             WHEN 'active' THEN 0
             WHEN 'blocked' THEN 1
@@ -97,8 +94,6 @@ $cardAccountStmt = $pdo->prepare("
     LIMIT 1
 ");
 $cardAccountStmt->execute([
-    $selectedVehicle['id'],
-    $selectedVehicle['facility_id'],
     $selectedVehicle['id'],
 ]);
 $cardAccount = $cardAccountStmt->fetch() ?: null;
@@ -197,8 +192,12 @@ $vehicleQueryBase = 'vehicle_id=' . urlencode((string) $selectedVehicle['id']) .
 $weekStatus = $weekly['status'] ?? 'draft';
 $weekStatusLabel = $weekly ? ucwords(str_replace('_', ' ', $weekly['status'])) : 'Draft';
 $fullWeekLabel = date('d F Y', strtotime($weekStart)) . ' to ' . date('d F Y', strtotime($weekEnd));
-$cardBalanceLabel = $cardAccount ? 'K ' . number_format((float) $cardAccount['current_balance'], 2) : 'Not linked';
-$cardBalanceNote = $cardAccount ? $cardAccount['account_name'] : 'No active card';
+$vehicleBalance = (float) ($selectedVehicle['float_balance'] ?? 0);
+$vehicleAccountName = trim((string) ($selectedVehicle['float_account_name'] ?? ''));
+$cardBalanceLabel = 'K ' . number_format($vehicleBalance, 2);
+$cardBalanceNote = $cardAccount
+    ? $cardAccount['account_name']
+    : ($vehicleAccountName !== '' ? $vehicleAccountName : 'No active card');
 
 echo '<section class="panel">';
 echo '<div class="panel-header-split">';

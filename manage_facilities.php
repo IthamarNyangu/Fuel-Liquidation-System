@@ -829,25 +829,18 @@ $inactive_facilities = $total_facilities - $active_facilities;
             }
         }
     </style>
+    <link rel="stylesheet" type="text/css" href="manage_facilities.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/manage_facilities.css')); ?>">
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="header-content">
-                <h1><i class="fas fa-building"></i> Manage Facilities</h1>
-                <div class="header-actions">
-                    <div class="user-name-badge">
-                        <i class="fas fa-user-shield"></i>
-                        <?php echo htmlspecialchars($logged_in_user_name); ?>
-                    </div>
-                    <button class="add-btn" onclick="openAddModal()">
-                        <i class="fas fa-plus-circle"></i> Add New Facility
-                    </button>
-                    <a href="dashboard.php" class="back-btn">
-                        <i class="fas fa-arrow-left"></i> Back to Dashboard
-                    </a>
+        <div class="page-header">
+            <div class="page-header-main">
+                <a href="dashboard.php" class="back-link">Back to Dashboard</a>
+                <div>
+                    <h1 class="page-title">Manage Facilities</h1>
+                    <p class="page-subtitle">Create, edit, and monitor facilities across the organisation.</p>
                 </div>
+                <button class="add-btn" type="button" onclick="openAddModal()">Add Facility</button>
             </div>
         </div>
 
@@ -859,53 +852,61 @@ $inactive_facilities = $total_facilities - $active_facilities;
             </div>
         <?php endif; ?>
 
-        <!-- Statistics Cards -->
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="stat-icon red">
-                    <i class="fas fa-building"></i>
-                </div>
                 <div class="stat-content">
+                    <div class="stat-label">Total Facilities</div>
                     <h3><?php echo $total_facilities; ?></h3>
-                    <p>Total Facilities</p>
                 </div>
             </div>
 
             <div class="stat-card">
-                <div class="stat-icon green">
-                    <i class="fas fa-check-circle"></i>
-                </div>
                 <div class="stat-content">
+                    <div class="stat-label">Active Facilities</div>
                     <h3><?php echo $active_facilities; ?></h3>
-                    <p>Active Facilities</p>
                 </div>
             </div>
 
             <div class="stat-card">
-                <div class="stat-icon gray">
-                    <i class="fas fa-pause-circle"></i>
-                </div>
                 <div class="stat-content">
+                    <div class="stat-label">Inactive Facilities</div>
                     <h3><?php echo $inactive_facilities; ?></h3>
-                    <p>Inactive Facilities</p>
                 </div>
             </div>
         </div>
 
-        <!-- Facilities Table -->
         <div class="table-card">
-            <div class="table-header">
-                <h2><i class="fas fa-list"></i> All Facilities</h2>
-                <div class="search-box">
-                    <i class="fas fa-search"></i>
-                    <input type="text" id="searchInput" placeholder="Search facilities..." onkeyup="searchTable()">
+            <div class="table-head">
+                <div class="table-title">
+                    <h2>Facility Register</h2>
+                    <p>Review facility setup, contact details, and operational footprint in one place.</p>
                 </div>
             </div>
+            <?php if (!empty($facilities)): ?>
+            <div class="toolbar">
+                <div class="toolbar-search">
+                    <input type="text" id="searchInput" placeholder="Search by facility, code, location, or contact" oninput="applyTableControls()">
+                </div>
+                <div class="toolbar-controls">
+                    <select id="statusFilter" class="toolbar-select" onchange="applyTableControls()">
+                        <option value="all">All Status</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                    <select id="sortSelect" class="toolbar-select" onchange="applyTableControls()">
+                        <option value="name">Sort: Name</option>
+                        <option value="location">Sort: Location</option>
+                        <option value="vehicles">Sort: Most Vehicles</option>
+                    </select>
+                    <button type="button" class="toolbar-clear" onclick="resetTableControls()">Clear</button>
+                </div>
+            </div>
+            <div class="table-meta"><span id="visibleCount"><?php echo count($facilities); ?> facilities shown</span></div>
+            <?php endif; ?>
 
             <div class="table-container">
                 <?php if (empty($facilities)): ?>
                     <div class="empty-state">
-                        <i class="fas fa-building"></i>
                         <h3>No Facilities Found</h3>
                         <p>Start by adding your first facility using the button above.</p>
                     </div>
@@ -913,94 +914,115 @@ $inactive_facilities = $total_facilities - $active_facilities;
                     <table id="facilitiesTable">
                         <thead>
                             <tr>
-                                <th>Facility Name</th>
+                                <th>Facility</th>
                                 <th>Code</th>
                                 <th>Location</th>
                                 <th>Contact</th>
-                                <th>Statistics</th>
+                                <th>Overview</th>
                                 <th>Status</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody id="facilitiesTableBody">
                             <?php foreach ($facilities as $facility): ?>
-                                <tr>
+                                <?php
+                                $statusValue = $facility['is_active'] ? 'active' : 'inactive';
+                                $overviewPrimary = number_format((int) $facility['total_users']) . ' Accounts - ' .
+                                    number_format((int) $facility['total_vehicles']) . ' Vehicles - ' .
+                                    number_format((int) $facility['total_requisitions']) . ' Requests';
+                                $facilityAdminCount = (int) $facility['total_facility_admins'];
+                                $overviewSecondary = $facilityAdminCount === 0
+                                    ? 'No facility admin assigned'
+                                    : ($facilityAdminCount === 1
+                                        ? '1 facility admin'
+                                        : number_format($facilityAdminCount) . ' facility admins');
+                                $searchBlob = strtolower(
+                                    implode(' ', array_filter([
+                                        (string) $facility['facility_name'],
+                                        (string) $facility['facility_code'],
+                                        (string) $facility['location'],
+                                        (string) $facility['address'],
+                                        (string) $facility['phone'],
+                                        (string) $facility['email'],
+                                    ]))
+                                );
+                                ?>
+                                <tr class="facility-row"
+                                    data-name="<?php echo htmlspecialchars(strtolower((string) $facility['facility_name']), ENT_QUOTES); ?>"
+                                    data-location="<?php echo htmlspecialchars(strtolower((string) ($facility['location'] ?? '')), ENT_QUOTES); ?>"
+                                    data-status="<?php echo $statusValue; ?>"
+                                    data-vehicles="<?php echo (int) $facility['total_vehicles']; ?>"
+                                    data-search="<?php echo htmlspecialchars($searchBlob, ENT_QUOTES); ?>">
                                     <td>
-                                        <div class="facility-name"><?php echo htmlspecialchars($facility['facility_name']); ?></div>
+                                        <div class="facility-primary"><?php echo htmlspecialchars($facility['facility_name']); ?></div>
                                         <?php if ($facility['created_by_name']): ?>
-                                            <small style="color: var(--gray-500); font-size: 11px;">
+                                            <div class="facility-subline">
                                                 Created by <?php echo htmlspecialchars($facility['created_by_name']); ?>
-                                            </small>
+                                            </div>
                                         <?php endif; ?>
                                     </td>
                                     <td>
                                         <span class="facility-code"><?php echo htmlspecialchars($facility['facility_code']); ?></span>
                                     </td>
                                     <td>
-                                        <div style="font-weight: 700;"><?php echo htmlspecialchars($facility['location'] ?: 'N/A'); ?></div>
+                                        <div class="location-primary"><?php echo htmlspecialchars($facility['location'] ?: 'N/A'); ?></div>
                                         <?php if ($facility['address']): ?>
-                                            <small style="color: var(--gray-500); font-size: 11px;">
+                                            <div class="location-secondary">
                                                 <?php echo htmlspecialchars($facility['address']); ?>
-                                            </small>
+                                            </div>
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <?php if ($facility['phone']): ?>
-                                            <div><i class="fas fa-phone"></i> <?php echo htmlspecialchars($facility['phone']); ?></div>
-                                        <?php endif; ?>
-                                        <?php if ($facility['email']): ?>
-                                            <div><i class="fas fa-envelope"></i> <?php echo htmlspecialchars($facility['email']); ?></div>
-                                        <?php endif; ?>
-                                        <?php if (!$facility['phone'] && !$facility['email']): ?>
-                                            <span style="color: var(--gray-400);">N/A</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <div style="display: flex; flex-direction: column; gap: 5px;">
-                                            <span class="stat-badge">
-                                                <i class="fas fa-users"></i> <?php echo $facility['total_users']; ?> Accounts
-                                            </span>
-                                            <span class="stat-badge">
-                                                <i class="fas fa-car"></i> <?php echo $facility['total_vehicles']; ?> Vehicles
-                                            </span>
-                                            <span class="stat-badge">
-                                                <i class="fas fa-file-alt"></i> <?php echo $facility['total_requisitions']; ?> Requests
-                                            </span>
+                                        <div class="contact-stack">
+                                            <?php if ($facility['phone']): ?>
+                                                <div class="contact-line"><?php echo htmlspecialchars($facility['phone']); ?></div>
+                                            <?php endif; ?>
+                                            <?php if ($facility['email']): ?>
+                                                <div class="contact-line"><?php echo htmlspecialchars($facility['email']); ?></div>
+                                            <?php endif; ?>
+                                            <?php if (!$facility['phone'] && !$facility['email']): ?>
+                                                <div class="contact-line contact-empty">N/A</div>
+                                            <?php endif; ?>
                                         </div>
                                     </td>
                                     <td>
+                                        <div class="overview-primary"><?php echo htmlspecialchars($overviewPrimary); ?></div>
+                                        <div class="overview-secondary"><?php echo htmlspecialchars($overviewSecondary); ?></div>
+                                    </td>
+                                    <td>
                                         <span class="status-badge <?php echo $facility['is_active'] ? 'active' : 'inactive'; ?>">
-                                            <i class="fas fa-circle" style="font-size: 8px;"></i>
                                             <?php echo $facility['is_active'] ? 'Active' : 'Inactive'; ?>
                                         </span>
                                     </td>
                                     <td>
                                         <div class="action-btns">
-                                            <button class="btn btn-edit" onclick='openEditModal(<?php echo json_encode($facility); ?>)'>
-                                                <i class="fas fa-edit"></i> Edit
-                                            </button>
-                                            <form method="POST" style="display: inline;">
-                                                <input type="hidden" name="action" value="toggle_status">
-                                                <input type="hidden" name="facility_id" value="<?php echo $facility['id']; ?>">
-                                                <input type="hidden" name="new_status" value="<?php echo $facility['is_active'] ? 0 : 1; ?>">
-                                                <button type="submit" class="btn btn-toggle" onclick="return confirm('Are you sure you want to <?php echo $facility['is_active'] ? 'deactivate' : 'activate'; ?> this facility?')">
-                                                    <i class="fas fa-<?php echo $facility['is_active'] ? 'pause' : 'play'; ?>"></i>
-                                                    <?php echo $facility['is_active'] ? 'Deactivate' : 'Activate'; ?>
-                                                </button>
-                                            </form>
-                                            <form method="POST" style="display: inline;">
-                                                <input type="hidden" name="action" value="delete">
-                                                <input type="hidden" name="facility_id" value="<?php echo $facility['id']; ?>">
-                                                <button type="submit" class="btn btn-delete" onclick="return confirm('Are you sure you want to delete this facility? This action cannot be undone.')">
-                                                    <i class="fas fa-trash"></i> Delete
-                                                </button>
-                                            </form>
+                                            <button type="button" class="action-edit" onclick='openEditModal(<?php echo json_encode($facility); ?>)'>Edit</button>
+                                            <details class="row-menu">
+                                                <summary class="menu-trigger">More</summary>
+                                                <div class="row-menu-panel">
+                                                    <form method="POST">
+                                                        <input type="hidden" name="action" value="toggle_status">
+                                                        <input type="hidden" name="facility_id" value="<?php echo $facility['id']; ?>">
+                                                        <input type="hidden" name="new_status" value="<?php echo $facility['is_active'] ? 0 : 1; ?>">
+                                                        <button type="submit" class="menu-action" onclick="return confirm('Are you sure you want to <?php echo $facility['is_active'] ? 'deactivate' : 'activate'; ?> this facility?')"><?php echo $facility['is_active'] ? 'Deactivate' : 'Activate'; ?></button>
+                                                    </form>
+                                                    <form method="POST">
+                                                        <input type="hidden" name="action" value="delete">
+                                                        <input type="hidden" name="facility_id" value="<?php echo $facility['id']; ?>">
+                                                        <button type="submit" class="menu-action danger" onclick="return confirm('Are you sure you want to delete this facility? This action cannot be undone.')">Delete</button>
+                                                    </form>
+                                                </div>
+                                            </details>
                                         </div>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
+                    <div class="empty-state table-empty-state" id="filteredEmptyState" hidden>
+                        <h3>No facilities match these filters</h3>
+                        <p>Adjust the search, status, or sort settings to see more results.</p>
+                    </div>
                 <?php endif; ?>
             </div>
         </div>
@@ -1010,53 +1032,54 @@ $inactive_facilities = $total_facilities - $active_facilities;
     <div id="addModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2><i class="fas fa-plus-circle"></i> Add New Facility</h2>
-                <button class="close-modal" onclick="closeAddModal()">
-                    <i class="fas fa-times"></i>
-                </button>
+                <div>
+                    <h2>Add Facility</h2>
+                    <p>Enter the core details for the new facility.</p>
+                </div>
+                <button type="button" class="close-modal" onclick="closeAddModal()">&times;</button>
             </div>
             <form method="POST">
                 <input type="hidden" name="action" value="add">
                 <div class="modal-body">
-                    <div class="form-group">
-                        <label>Facility Name <span class="required">*</span></label>
-                        <input type="text" name="facility_name" required placeholder="e.g., Central Hospital">
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Facility Code <span class="required">*</span></label>
-                            <input type="text" name="facility_code" required placeholder="e.g., FAC-001" style="text-transform: uppercase;">
+                    <section class="modal-section">
+                        <div class="modal-section-title">Basic Details</div>
+                        <div class="form-row">
+                            <div class="form-group full-width">
+                                <label>Facility Name <span class="required">*</span></label>
+                                <input type="text" name="facility_name" required placeholder="e.g., Central Hospital">
+                            </div>
+                            <div class="form-group">
+                                <label>Facility Code <span class="required">*</span></label>
+                                <input type="text" name="facility_code" required placeholder="e.g., FAC-001" style="text-transform: uppercase;">
+                            </div>
+                            <div class="form-group">
+                                <label>Location <span class="required">*</span></label>
+                                <input type="text" name="location" required placeholder="e.g., Lusaka">
+                            </div>
                         </div>
+                    </section>
 
-                        <div class="form-group">
-                            <label>Location <span class="required">*</span></label>
-                            <input type="text" name="location" required placeholder="e.g., Lusaka">
+                    <section class="modal-section">
+                        <div class="modal-section-title">Contact Details</div>
+                        <div class="form-row">
+                            <div class="form-group full-width">
+                                <label>Address</label>
+                                <textarea name="address" placeholder="Full facility address"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Phone Number</label>
+                                <input type="tel" name="phone" placeholder="e.g., +260 211 123456">
+                            </div>
+                            <div class="form-group">
+                                <label>Email Address</label>
+                                <input type="email" name="email" placeholder="e.g., info@facility.com">
+                            </div>
                         </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Address</label>
-                        <textarea name="address" placeholder="Full facility address..."></textarea>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Phone Number</label>
-                            <input type="tel" name="phone" placeholder="e.g., +260 211 123456">
-                        </div>
-
-                        <div class="form-group">
-                            <label>Email Address</label>
-                            <input type="email" name="email" placeholder="e.g., info@facility.com">
-                        </div>
-                    </div>
+                    </section>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn-cancel" onclick="closeAddModal()">Cancel</button>
-                    <button type="submit" class="btn-submit">
-                        <i class="fas fa-save"></i> Add Facility
-                    </button>
+                    <button type="submit" class="btn-submit">Save Facility</button>
                 </div>
             </form>
         </div>
@@ -1066,54 +1089,55 @@ $inactive_facilities = $total_facilities - $active_facilities;
     <div id="editModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2><i class="fas fa-edit"></i> Edit Facility</h2>
-                <button class="close-modal" onclick="closeEditModal()">
-                    <i class="fas fa-times"></i>
-                </button>
+                <div>
+                    <h2>Edit Facility</h2>
+                    <p>Update the current facility details and contact information.</p>
+                </div>
+                <button type="button" class="close-modal" onclick="closeEditModal()">&times;</button>
             </div>
             <form method="POST">
                 <input type="hidden" name="action" value="edit">
                 <input type="hidden" name="facility_id" id="edit_facility_id">
                 <div class="modal-body">
-                    <div class="form-group">
-                        <label>Facility Name <span class="required">*</span></label>
-                        <input type="text" name="facility_name" id="edit_facility_name" required>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Facility Code <span class="required">*</span></label>
-                            <input type="text" name="facility_code" id="edit_facility_code" required style="text-transform: uppercase;">
+                    <section class="modal-section">
+                        <div class="modal-section-title">Basic Details</div>
+                        <div class="form-row">
+                            <div class="form-group full-width">
+                                <label>Facility Name <span class="required">*</span></label>
+                                <input type="text" name="facility_name" id="edit_facility_name" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Facility Code <span class="required">*</span></label>
+                                <input type="text" name="facility_code" id="edit_facility_code" required style="text-transform: uppercase;">
+                            </div>
+                            <div class="form-group">
+                                <label>Location <span class="required">*</span></label>
+                                <input type="text" name="location" id="edit_location" required>
+                            </div>
                         </div>
+                    </section>
 
-                        <div class="form-group">
-                            <label>Location <span class="required">*</span></label>
-                            <input type="text" name="location" id="edit_location" required>
+                    <section class="modal-section">
+                        <div class="modal-section-title">Contact Details</div>
+                        <div class="form-row">
+                            <div class="form-group full-width">
+                                <label>Address</label>
+                                <textarea name="address" id="edit_address"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Phone Number</label>
+                                <input type="tel" name="phone" id="edit_phone">
+                            </div>
+                            <div class="form-group">
+                                <label>Email Address</label>
+                                <input type="email" name="email" id="edit_email">
+                            </div>
                         </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Address</label>
-                        <textarea name="address" id="edit_address"></textarea>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Phone Number</label>
-                            <input type="tel" name="phone" id="edit_phone">
-                        </div>
-
-                        <div class="form-group">
-                            <label>Email Address</label>
-                            <input type="email" name="email" id="edit_email">
-                        </div>
-                    </div>
+                    </section>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn-cancel" onclick="closeEditModal()">Cancel</button>
-                    <button type="submit" class="btn-submit">
-                        <i class="fas fa-save"></i> Update Facility
-                    </button>
+                    <button type="submit" class="btn-submit">Save Facility</button>
                 </div>
             </form>
         </div>
@@ -1144,41 +1168,88 @@ $inactive_facilities = $total_facilities - $active_facilities;
             document.getElementById('editModal').classList.remove('active');
         }
 
-        // Close modals when clicking outside
+        function applyTableControls() {
+            const tableBody = document.getElementById('facilitiesTableBody');
+            if (!tableBody) {
+                return;
+            }
+
+            const rows = Array.from(tableBody.querySelectorAll('.facility-row'));
+            const searchValue = (document.getElementById('searchInput')?.value || '').trim().toLowerCase();
+            const statusValue = document.getElementById('statusFilter')?.value || 'all';
+            const sortValue = document.getElementById('sortSelect')?.value || 'name';
+
+            rows.sort((a, b) => {
+                if (sortValue === 'location') {
+                    return (a.dataset.location || '').localeCompare(b.dataset.location || '');
+                }
+
+                if (sortValue === 'vehicles') {
+                    return Number(b.dataset.vehicles || 0) - Number(a.dataset.vehicles || 0);
+                }
+
+                return (a.dataset.name || '').localeCompare(b.dataset.name || '');
+            });
+
+            rows.forEach((row) => tableBody.appendChild(row));
+
+            let visibleCount = 0;
+            rows.forEach((row) => {
+                const matchesSearch = searchValue === '' || (row.dataset.search || '').includes(searchValue);
+                const matchesStatus = statusValue === 'all' || row.dataset.status === statusValue;
+                const shouldShow = matchesSearch && matchesStatus;
+
+                row.style.display = shouldShow ? '' : 'none';
+                if (shouldShow) {
+                    visibleCount += 1;
+                }
+            });
+
+            const visibleCountEl = document.getElementById('visibleCount');
+            if (visibleCountEl) {
+                visibleCountEl.textContent = visibleCount + (visibleCount === 1 ? ' facility shown' : ' facilities shown');
+            }
+
+            const filteredEmptyState = document.getElementById('filteredEmptyState');
+            if (filteredEmptyState) {
+                filteredEmptyState.hidden = visibleCount !== 0;
+            }
+        }
+
+        function resetTableControls() {
+            const searchInput = document.getElementById('searchInput');
+            const statusFilter = document.getElementById('statusFilter');
+            const sortSelect = document.getElementById('sortSelect');
+
+            if (searchInput) {
+                searchInput.value = '';
+            }
+            if (statusFilter) {
+                statusFilter.value = 'all';
+            }
+            if (sortSelect) {
+                sortSelect.value = 'name';
+            }
+
+            applyTableControls();
+        }
+
         window.onclick = function(event) {
             const addModal = document.getElementById('addModal');
             const editModal = document.getElementById('editModal');
+
             if (event.target === addModal) {
                 closeAddModal();
             }
             if (event.target === editModal) {
                 closeEditModal();
             }
-        }
 
-        // Search functionality
-        function searchTable() {
-            const input = document.getElementById('searchInput');
-            const filter = input.value.toUpperCase();
-            const table = document.getElementById('facilitiesTable');
-            const tr = table.getElementsByTagName('tr');
-
-            for (let i = 1; i < tr.length; i++) {
-                let found = false;
-                const td = tr[i].getElementsByTagName('td');
-                
-                for (let j = 0; j < td.length; j++) {
-                    if (td[j]) {
-                        const txtValue = td[j].textContent || td[j].innerText;
-                        if (txtValue.toUpperCase().indexOf(filter) > -1) {
-                            found = true;
-                            break;
-                        }
-                    }
+            document.querySelectorAll('.row-menu[open]').forEach((menu) => {
+                if (!menu.contains(event.target)) {
+                    menu.removeAttribute('open');
                 }
-                
-                tr[i].style.display = found ? '' : 'none';
-            }
+            });
         }
 
         // Auto-hide alert after 5 seconds
@@ -1192,7 +1263,6 @@ $inactive_facilities = $total_facilities - $active_facilities;
             }, 5000);
         <?php endif; ?>
 
-        // Auto-uppercase facility code
         document.addEventListener('DOMContentLoaded', function() {
             const codeInputs = document.querySelectorAll('input[name="facility_code"]');
             codeInputs.forEach(input => {
@@ -1200,6 +1270,8 @@ $inactive_facilities = $total_facilities - $active_facilities;
                     this.value = this.value.toUpperCase();
                 });
             });
+
+            applyTableControls();
         });
     </script>
 </body>

@@ -14,6 +14,7 @@ $user_facility_id = getUserFacilityId();
 $user_role = isset($_SESSION['user_role']) ? $_SESSION['user_role'] : 'staff';
 $user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'User';
 $user_email = isset($_SESSION['user_email']) ? $_SESSION['user_email'] : '';
+$user_role_label = function_exists('getRoleDisplayName') ? getRoleDisplayName() : ucwords(str_replace('_', ' ', $user_role));
 $can_approve = in_array($user_role, ['super_admin', 'admin']);
 $can_review_weekly = $can_approve || $user_role === 'facility_admin' || !empty($_SESSION['is_facility_admin']);
 $can_use_driver_workflow = in_array($user_role, ['staff', 'admin', 'approver', 'super_admin'], true);
@@ -149,20 +150,31 @@ foreach ($staff_filter_params as $key => $value) {
 $yearsStmt->execute();
 $availableYears = $yearsStmt->fetchAll(PDO::FETCH_COLUMN);
 
-// Fetch vehicles with float accounts (filtered by facility)
+// Fetch vehicle float accounts
 $accountsQuery = "SELECT float_account_name, float_balance FROM vehicles WHERE float_account_name IS NOT NULL";
-if (!$is_super_admin && $user_facility_id) {
+if ($user_role === 'staff') {
+    $accountsQuery .= " AND current_driver_id = :current_driver_id";
+} elseif (!$is_super_admin && $user_facility_id) {
     $accountsQuery .= " AND facility_id = :facility_id";
 } elseif ($is_super_admin && $selected_facility_id > 0) {
     $accountsQuery .= " AND facility_id = :facility_id";
 }
 $accountsQuery .= " ORDER BY vehicle_name";
 $accountsStmt = $pdo->prepare($accountsQuery);
-if ((!$is_super_admin && $user_facility_id) || ($is_super_admin && $selected_facility_id > 0)) {
+if ($user_role === 'staff') {
+    $accountsStmt->bindValue(':current_driver_id', (int) $_SESSION['user_id'], PDO::PARAM_INT);
+} elseif ((!$is_super_admin && $user_facility_id) || ($is_super_admin && $selected_facility_id > 0)) {
     $accountsStmt->bindValue(':facility_id', $selected_facility_id);
 }
 $accountsStmt->execute();
 $floatAccounts = $accountsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$availableAccountNames = array_map(static function (array $account): string {
+    return (string) ($account['float_account_name'] ?? '');
+}, $floatAccounts);
+if ($selectedAccount !== 'All' && !in_array($selectedAccount, $availableAccountNames, true)) {
+    $selectedAccount = 'All';
+}
 
 // Calculate total float
 $totalFloat = 0;
@@ -175,7 +187,11 @@ if ($selectedAccount === 'All') {
     $displayFloat = $totalFloat;
 } else {
     $accountQuery = "SELECT float_balance FROM vehicles WHERE float_account_name = ?";
-    if ((!$is_super_admin && $user_facility_id) || ($is_super_admin && $selected_facility_id > 0)) {
+    if ($user_role === 'staff') {
+        $accountQuery .= " AND current_driver_id = ?";
+        $accountStmt = $pdo->prepare($accountQuery);
+        $accountStmt->execute([$selectedAccount, (int) $_SESSION['user_id']]);
+    } elseif ((!$is_super_admin && $user_facility_id) || ($is_super_admin && $selected_facility_id > 0)) {
         $accountQuery .= " AND facility_id = ?";
         $accountStmt = $pdo->prepare($accountQuery);
         $accountStmt->execute([$selectedAccount, $selected_facility_id]);
@@ -573,7 +589,7 @@ if ($is_super_admin) {
                     <div class="user-info-header">
                         <div class="user-details-header">
                             <div class="user-name-header"><?php echo htmlspecialchars($user_name); ?></div>
-                            <div class="user-role-header"><?php echo ucwords(str_replace('_', ' ', $user_role)); ?></div>
+                            <div class="user-role-header"><?php echo htmlspecialchars($user_role_label); ?></div>
                         </div>
                     </div>
                     <a href="logout.php" class="btn-logout">

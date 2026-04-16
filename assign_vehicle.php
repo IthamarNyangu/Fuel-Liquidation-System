@@ -1,18 +1,6 @@
 <?php
-session_start();
+require_once 'admin_auth.php';
 require_once 'db_connect.php';
-
-// Check if user is logged in and has permission
-if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
-    header("Location: index.php");
-    exit();
-}
-
-if ($_SESSION['user_role'] !== 'admin' && $_SESSION['user_role'] !== 'approver') {
-    $_SESSION['error_message'] = "You don't have permission to perform this action";
-    header("Location: manage_vehicles.php");
-    exit();
-}
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $vehicle_id = intval($_POST['vehicle_id']);
@@ -32,6 +20,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $conn->begin_transaction();
     
     try {
+        // Ensure the selected account can still be assigned
+        $user_check_query = "SELECT name FROM users WHERE id = ? AND user_status = 'active' LIMIT 1";
+        $stmt = $conn->prepare($user_check_query);
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $user = $result->fetch_assoc();
+        $stmt->close();
+
+        if (!$user) {
+            throw new Exception("The selected driver account is inactive or no longer available.");
+        }
+
         // Deactivate any existing assignments for this vehicle
         $deactivate_query = "UPDATE vehicle_assignments 
                             SET is_active = 0 
@@ -64,14 +65,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $stmt->execute();
         $result = $stmt->get_result();
         $vehicle = $result->fetch_assoc();
-        $stmt->close();
-        
-        $user_query = "SELECT name FROM users WHERE id = ?";
-        $stmt = $conn->prepare($user_query);
-        $stmt->bind_param("i", $user_id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $user = $result->fetch_assoc();
         $stmt->close();
         
         // Commit transaction

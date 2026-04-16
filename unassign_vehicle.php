@@ -1,18 +1,6 @@
 <?php
-session_start();
+require_once 'admin_auth.php';
 require_once 'db_connect.php';
-
-// Check if user is logged in and has permission
-if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
-    header("Location: index.php");
-    exit();
-}
-
-if ($_SESSION['user_role'] !== 'admin' && $_SESSION['user_role'] !== 'approver') {
-    $_SESSION['error_message'] = "You don't have permission to perform this action";
-    header("Location: manage_vehicles.php");
-    exit();
-}
 
 if (isset($_GET['vehicle_id'])) {
     $vehicle_id = intval($_GET['vehicle_id']);

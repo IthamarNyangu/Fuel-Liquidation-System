@@ -21,16 +21,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // If no validation errors, check credentials
     if (empty($errors)) {
         // Query to get user by username or email with facility info
-        $stmt = $conn->prepare("SELECT id, name, email, password, role, facility_id, is_super_admin, is_facility_admin FROM users WHERE name = ? OR email = ?");
+        $stmt = $conn->prepare("SELECT id, name, email, password, role, facility_id, is_super_admin, is_facility_admin, user_status FROM users WHERE name = ? OR email = ?");
         $stmt->bind_param("ss", $username, $username);
         $stmt->execute();
         $result = $stmt->get_result();
         
         if ($result->num_rows == 1) {
             $user = $result->fetch_assoc();
+
+            if (($user['user_status'] ?? 'active') !== 'active') {
+                $errors[] = "This account is inactive. Contact an administrator.";
+            }
             
             // Verify password
-            if (password_verify($password, $user['password'])) {
+            if (empty($errors) && password_verify($password, $user['password'])) {
                 // Password is correct, create session
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['user_name'] = $user['name'];
@@ -45,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 // Redirect to dashboard
                 header("Location: dashboard.php");
                 exit();
-            } else {
+            } elseif (empty($errors)) {
                 $errors[] = "Invalid username or password";
             }
         } else {

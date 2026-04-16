@@ -267,8 +267,8 @@ foreach ($vehicles as $vehicle) {
 }
 $unassignedVehicles = $totalVehicles - $assignedVehicles;
 
-// Fetch all users for assignment
-$usersStmt = $conn->query("SELECT id, name, email FROM users ORDER BY name");
+// Fetch active users for assignment
+$usersStmt = $conn->query("SELECT id, name, email FROM users WHERE user_status = 'active' ORDER BY name");
 $users = $usersStmt->fetch_all(MYSQLI_ASSOC);
 
 // Fetch all facilities (for super admin)
@@ -1168,19 +1168,19 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
         <div class="vm-page">
             <header class="vm-header">
                 <div class="vm-header-main">
+                    <a href="dashboard.php" class="vm-btn vm-btn-secondary vm-header-back">Back to Dashboard</a>
                     <div class="vm-title-block">
                         <p class="vm-kicker">Fleet Administration</p>
                         <h1>Vehicle Management</h1>
                         <p class="vm-subtitle">Maintain vehicle records, facility ownership, and driver assignment readiness in one place.</p>
                     </div>
+                </div>
+                <div class="vm-header-actions">
                     <?php if (!$is_super_admin): ?>
                         <span class="vm-scope-chip">
                             <?php echo 'Facility: ' . htmlspecialchars($facility_display); ?>
                         </span>
                     <?php endif; ?>
-                </div>
-                <div class="vm-header-actions">
-                    <a href="dashboard.php" class="vm-btn vm-btn-secondary">Back to Dashboard</a>
                     <button type="button" onclick="openAddModal()" class="vm-btn vm-btn-primary">Add Vehicle</button>
                 </div>
             </header>

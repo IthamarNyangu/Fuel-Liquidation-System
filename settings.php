@@ -39,8 +39,8 @@ $vehicles_query = "SELECT v.*, u.name as driver_name
                    ORDER BY v.vehicle_name";
 $vehicles_result = $conn->query($vehicles_query);
 
-// Fetch all users (potential drivers)
-$users_query = "SELECT id, name, email, role FROM users ORDER BY name";
+// Fetch active users (potential drivers)
+$users_query = "SELECT id, name, email, role FROM users WHERE user_status = 'active' ORDER BY name";
 $users_result = $conn->query($users_query);
 
 // Fetch current system settings

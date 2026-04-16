@@ -161,7 +161,7 @@ if (isset($_SESSION['success_message'])) {
 // Fetch data for form
 try {
     // Get all staff for reference (but logged-in user will be pre-selected)
-    $staffList = $conn->query("SELECT id, name FROM users ORDER BY name")->fetch_all(MYSQLI_ASSOC);
+    $staffList = $conn->query("SELECT id, name FROM users WHERE user_status = 'active' ORDER BY name")->fetch_all(MYSQLI_ASSOC);
     
     // Get vehicle assigned to logged-in user OR all vehicles from user's facility if none assigned
     $assigned_vehicle_query = "
@@ -233,7 +233,7 @@ try {
     }
     
     // Get approvers from user's facility (only admins and super_admins can approve)
-    $approvers_query = "SELECT id, name FROM users WHERE role IN ('admin', 'super_admin')";
+    $approvers_query = "SELECT id, name FROM users WHERE user_status = 'active' AND role IN ('admin', 'super_admin')";
     if (!$is_super_admin && $user_facility_id) {
         $approvers_query .= " AND facility_id = ?";
     }

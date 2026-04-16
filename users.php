@@ -46,6 +46,30 @@ function users_role_label(string $role): string {
     return ucwords(str_replace('_', ' ', $role));
 }
 
+function users_role_options(bool $isSuperAdmin): array {
+    $options = [];
+    if ($isSuperAdmin) {
+        $options['super_admin'] = 'Super Admin';
+    }
+    $options['admin'] = 'Admin';
+    $options['facility_admin'] = 'Facility Admin';
+    $options['staff'] = 'Driver';
+
+    return $options;
+}
+
+function users_role_requires_facility(string $role): bool {
+    return in_array($role, ['facility_admin', 'staff'], true);
+}
+
+function users_status_label(string $status): string {
+    return $status === 'inactive' ? 'Inactive' : 'Active';
+}
+
+function users_status_class(string $status): string {
+    return $status === 'inactive' ? 'is-inactive' : 'is-active';
+}
+
 // Handle Add User
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
     try {
@@ -53,9 +77,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
         $email = trim($_POST['email']);
         $role = $_POST['role'];
         $new_password = trim($_POST['password']);
-        $facility_id = $_POST['facility_id'];
+        $facility_id = isset($_POST['facility_id']) && $_POST['facility_id'] !== '' ? (int) $_POST['facility_id'] : null;
+        $roleOptions = users_role_options($is_super_admin);
+
+        if (!isset($roleOptions[$role])) {
+            throw new Exception('Choose a valid role for the account.');
+        }
+
+        if (users_role_requires_facility($role) && !$facility_id) {
+            throw new Exception('Facility is required for Facility Admin and Driver accounts.');
+        }
         
         // Validate facility access
+        if (!$is_super_admin) {
+            $facility_id = (int) $user_facility_id;
+        }
+
         if (!$is_super_admin && $facility_id != $user_facility_id) {
             throw new Exception('You can only add users to your own facility');
         }
@@ -80,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
         ");
         $stmt->execute([$name, $email, $hashedPassword, $role, $facility_id, $is_facility_admin, $is_super]);
         
-        $message = "User '{$name}' added successfully!";
+        $message = "Account '{$name}' added successfully.";
         $messageType = 'success';
     } catch (Exception $e) {
         $message = "Error: " . $e->getMessage();
@@ -95,7 +132,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_user'])) {
         $name = trim($_POST['name']);
         $email = trim($_POST['email']);
         $role = $_POST['role'];
-        $facility_id = $_POST['facility_id'];
+        $facility_id = isset($_POST['facility_id']) && $_POST['facility_id'] !== '' ? (int) $_POST['facility_id'] : null;
+        $roleOptions = users_role_options($is_super_admin);
+
+        if (!isset($roleOptions[$role])) {
+            throw new Exception('Choose a valid role for the account.');
+        }
+
+        if (users_role_requires_facility($role) && !$facility_id) {
+            throw new Exception('Facility is required for Facility Admin and Driver accounts.');
+        }
         
         // Verify user belongs to admin's facility (if not super admin)
         if (!$is_super_admin) {
@@ -107,9 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_user'])) {
                 throw new Exception('You can only edit users in your facility');
             }
             
-            if ($facility_id != $user_facility_id) {
-                throw new Exception('You cannot transfer users to other facilities');
-            }
+            $facility_id = (int) $user_facility_id;
         }
         
         // Check if email already exists for other users
@@ -130,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_user'])) {
         ");
         $stmt->execute([$name, $email, $role, $facility_id, $is_facility_admin, $is_super, $user_id]);
         
-        $message = "User '{$name}' updated successfully!";
+        $message = "Account '{$name}' updated successfully.";
         $messageType = 'success';
     } catch (Exception $e) {
         $message = "Error: " . $e->getMessage();
@@ -169,6 +213,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_password'])) {
         $messageType = 'success';
     } catch (Exception $e) {
         $message = "Error: " . $e->getMessage();
+        $messageType = 'error';
+    }
+}
+
+// Handle Activate / Deactivate Account
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_user_status'])) {
+    try {
+        $user_id = (int) ($_POST['user_id'] ?? 0);
+        $target_status = trim((string) ($_POST['target_status'] ?? ''));
+
+        if (!in_array($target_status, ['active', 'inactive'], true)) {
+            throw new Exception('Choose a valid account status.');
+        }
+
+        if ($user_id === (int) $_SESSION['user_id'] && $target_status === 'inactive') {
+            throw new Exception('You cannot deactivate your own account while signed in.');
+        }
+
+        if (!$is_super_admin) {
+            $checkStmt = $pdo->prepare("SELECT facility_id FROM users WHERE id = ?");
+            $checkStmt->execute([$user_id]);
+            $userFacility = $checkStmt->fetchColumn();
+
+            if ((int) $userFacility !== (int) $user_facility_id) {
+                throw new Exception('You can only update account status for users in your facility.');
+            }
+        }
+
+        $stmt = $pdo->prepare("SELECT name FROM users WHERE id = ?");
+        $stmt->execute([$user_id]);
+        $userName = $stmt->fetchColumn();
+
+        if (!$userName) {
+            throw new Exception('Account not found.');
+        }
+
+        $stmt = $pdo->prepare("UPDATE users SET user_status = ? WHERE id = ?");
+        $stmt->execute([$target_status, $user_id]);
+
+        $message = "Account '{$userName}' is now " . users_status_label($target_status) . '.';
+        $messageType = 'success';
+    } catch (Exception $e) {
+        $message = 'Error: ' . $e->getMessage();
         $messageType = 'error';
     }
 }
@@ -221,26 +308,6 @@ if ($is_super_admin) {
     $facilities = $facilitiesStmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// Fetch all users (filtered by facility for non-super admins)
-if ($is_super_admin) {
-    $usersStmt = $pdo->query("
-        SELECT u.*, f.facility_name 
-        FROM users u 
-        LEFT JOIN facilities f ON u.facility_id = f.id 
-        ORDER BY u.created_at DESC
-    ");
-} else {
-    $usersStmt = $pdo->prepare("
-        SELECT u.*, f.facility_name 
-        FROM users u 
-        LEFT JOIN facilities f ON u.facility_id = f.id 
-        WHERE u.facility_id = ?
-        ORDER BY u.created_at DESC
-    ");
-    $usersStmt->execute([$user_facility_id]);
-}
-$users = $usersStmt->fetchAll(PDO::FETCH_ASSOC);
-
 // Get facility display name
 if ($is_super_admin) {
     $facility_display = "All Facilities";
@@ -252,10 +319,101 @@ if ($is_super_admin) {
     $facility_display = $facility_row ? $facility_row['facility_name'] : 'Your Facility';
 }
 
-// Count users by role
-$total_users = count($users);
-$admin_count = count(array_filter($users, function($u) { return in_array($u['role'], ['super_admin', 'admin', 'facility_admin']); }));
-$staff_count = count(array_filter($users, function($u) { return $u['role'] === 'staff'; }));
+$page_title = 'Account Management';
+$role_options = users_role_options($is_super_admin);
+$search = trim((string) ($_GET['search'] ?? ''));
+$role_filter = trim((string) ($_GET['role'] ?? ''));
+$facility_filter = trim((string) ($_GET['facility'] ?? ''));
+$status_filter = trim((string) ($_GET['status'] ?? ''));
+$accounts_page = max(1, (int) ($_GET['page'] ?? 1));
+$accounts_per_page = 10;
+
+if ($role_filter !== '' && !array_key_exists($role_filter, $role_options)) {
+    $role_filter = '';
+}
+if (!in_array($status_filter, ['', 'active', 'inactive'], true)) {
+    $status_filter = '';
+}
+if (!$is_super_admin) {
+    $facility_filter = '';
+}
+
+$scopeWhere = [];
+$scopeParams = [];
+if (!$is_super_admin) {
+    $scopeWhere[] = 'u.facility_id = ?';
+    $scopeParams[] = $user_facility_id;
+}
+
+$statsSql = "
+    SELECT
+        COUNT(*) AS total_accounts,
+        SUM(CASE WHEN u.role IN ('super_admin', 'admin', 'facility_admin') THEN 1 ELSE 0 END) AS total_admins,
+        SUM(CASE WHEN u.role = 'staff' THEN 1 ELSE 0 END) AS total_drivers
+    FROM users u
+";
+if ($scopeWhere) {
+    $statsSql .= ' WHERE ' . implode(' AND ', $scopeWhere);
+}
+$statsStmt = $pdo->prepare($statsSql);
+$statsStmt->execute($scopeParams);
+$stats = $statsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+$total_users = (int) ($stats['total_accounts'] ?? 0);
+$admin_count = (int) ($stats['total_admins'] ?? 0);
+$staff_count = (int) ($stats['total_drivers'] ?? 0);
+
+$tableWhere = $scopeWhere;
+$tableParams = $scopeParams;
+if ($search !== '') {
+    $tableWhere[] = '(u.name LIKE ? OR u.email LIKE ?)';
+    $tableParams[] = '%' . $search . '%';
+    $tableParams[] = '%' . $search . '%';
+}
+if ($role_filter !== '') {
+    $tableWhere[] = 'u.role = ?';
+    $tableParams[] = $role_filter;
+}
+if ($is_super_admin && $facility_filter !== '') {
+    if ($facility_filter === 'unassigned') {
+        $tableWhere[] = 'u.facility_id IS NULL';
+    } else {
+        $tableWhere[] = 'u.facility_id = ?';
+        $tableParams[] = (int) $facility_filter;
+    }
+}
+if ($status_filter !== '') {
+    $tableWhere[] = 'u.user_status = ?';
+    $tableParams[] = $status_filter;
+}
+
+$whereSql = $tableWhere ? ' WHERE ' . implode(' AND ', $tableWhere) : '';
+
+$usersCountStmt = $pdo->prepare("
+    SELECT COUNT(*)
+    FROM users u
+    LEFT JOIN facilities f ON u.facility_id = f.id
+    $whereSql
+");
+$usersCountStmt->execute($tableParams);
+$filtered_total_users = (int) $usersCountStmt->fetchColumn();
+$total_pages = max(1, (int) ceil($filtered_total_users / $accounts_per_page));
+$accounts_page = min($accounts_page, $total_pages);
+$accounts_offset = ($accounts_page - 1) * $accounts_per_page;
+
+$usersStmt = $pdo->prepare("
+    SELECT u.*, f.facility_name
+    FROM users u
+    LEFT JOIN facilities f ON u.facility_id = f.id
+    $whereSql
+    ORDER BY u.created_at DESC
+    LIMIT $accounts_per_page OFFSET $accounts_offset
+");
+$usersStmt->execute($tableParams);
+$users = $usersStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$accounts_start = $filtered_total_users > 0 ? ($accounts_offset + 1) : 0;
+$accounts_end = $filtered_total_users > 0 ? min($accounts_offset + $accounts_per_page, $filtered_total_users) : 0;
+$has_active_filters = ($search !== '' || $role_filter !== '' || $facility_filter !== '' || $status_filter !== '');
 ?>
 
 <!DOCTYPE html>
@@ -263,7 +421,7 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>User Management</title>
+    <title><?php echo htmlspecialchars($page_title); ?></title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
@@ -869,143 +1027,199 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
             }
         }
     </style>
+    <link rel="stylesheet" type="text/css" href="users.css?v=<?php echo urlencode((string) @filemtime(__DIR__ . '/users.css')); ?>">
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="header-content">
-                <h1>
-                    <i class="fas fa-users"></i> User Management
-                    <span class="facility-badge <?php echo $is_super_admin ? 'super-admin' : ''; ?>">
-                        <i class="fas fa-<?php echo $is_super_admin ? 'crown' : 'building'; ?>"></i> 
-                        <?php echo htmlspecialchars($facility_display); ?>
-                    </span>
-                </h1>
-                <a href="dashboard.php" class="back-btn">
-                    <i class="fas fa-arrow-left"></i> Back to Dashboard
-                </a>
-            </div>
-        </div>
-
-        <!-- Alert Message -->
-        <?php if ($message): ?>
-            <div class="alert alert-<?php echo $messageType; ?>">
-                <i class="fas fa-<?php echo $messageType === 'success' ? 'check-circle' : 'exclamation-circle'; ?>"></i>
-                <?php echo htmlspecialchars($message); ?>
-            </div>
-        <?php endif; ?>
-
-        <!-- Statistics -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-icon">
-                    <i class="fas fa-users"></i>
+        <div class="ua-page">
+            <header class="ua-header">
+                <div class="ua-header-main">
+                    <a href="dashboard.php" class="ua-back-link">Back to Dashboard</a>
+                    <div class="ua-title-block">
+                        <h1><?php echo htmlspecialchars($page_title); ?></h1>
+                        <p>Manage system accounts, access scope, and role assignments across the fleet platform.</p>
+                    </div>
                 </div>
-                <div class="stat-label">Total Users</div>
-                <div class="stat-value"><?php echo $total_users; ?></div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">
-                    <i class="fas fa-user-shield"></i>
+                <div class="ua-header-actions">
+                    <button type="button" class="ua-primary-button" onclick="openAddModal()">Add Account</button>
                 </div>
-                <div class="stat-label">Administrators</div>
-                <div class="stat-value"><?php echo $admin_count; ?></div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon">
-                    <i class="fas fa-user"></i>
-                </div>
-                <div class="stat-label">Drivers</div>
-                <div class="stat-value"><?php echo $staff_count; ?></div>
-            </div>
-        </div>
+            </header>
 
-        <!-- Users List -->
-        <div class="card">
-            <div class="card-title">
-                <span><i class="fas fa-list"></i> All Users</span>
-                <button class="btn-add" onclick="openAddModal()">
-                    <i class="fas fa-plus"></i> Add New User
-                </button>
-            </div>
-
-            <?php if (count($users) > 0): ?>
-                <div class="table-container">
-                    <table class="users-table">
-                        <thead>
-                            <tr>
-                                <th><i class="fas fa-user"></i> Name</th>
-                                <th><i class="fas fa-envelope"></i> Email</th>
-                                <th><i class="fas fa-shield-alt"></i> Role</th>
-                                <?php if ($is_super_admin): ?>
-                                <th><i class="fas fa-building"></i> Facility</th>
-                                <?php endif; ?>
-                                <th><i class="fas fa-calendar"></i> Created</th>
-                                <th><i class="fas fa-cog"></i> Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($users as $user): ?>
-                            <tr>
-                                <td><?php echo htmlspecialchars($user['name']); ?></td>
-                                <td><?php echo htmlspecialchars($user['email']); ?></td>
-                                <td>
-                                    <?php 
-                                    $roleClass = 'badge-staff';
-                                    $roleIcon = 'user';
-                                    if ($user['role'] === 'super_admin') {
-                                        $roleClass = 'badge-super-admin';
-                                        $roleIcon = 'crown';
-                                    } elseif (in_array($user['role'], ['admin', 'facility_admin'])) {
-                                        $roleClass = 'badge-admin';
-                                        $roleIcon = 'user-shield';
-                                    }
-                                    ?>
-                                    <span class="badge <?php echo $roleClass; ?>">
-                                        <i class="fas fa-<?php echo $roleIcon; ?>"></i>
-                                        <?php echo users_role_label((string) $user['role']); ?>
-                                    </span>
-                                </td>
-                                <?php if ($is_super_admin): ?>
-                                <td>
-                                    <?php if ($user['facility_name']): ?>
-                                        <span class="facility-tag">
-                                            <i class="fas fa-building"></i> <?php echo htmlspecialchars($user['facility_name']); ?>
-                                        </span>
-                                    <?php else: ?>
-                                        <span style="color: var(--gray-400);">-</span>
-                                    <?php endif; ?>
-                                </td>
-                                <?php endif; ?>
-                                <td><?php echo date('d M Y', strtotime($user['created_at'])); ?></td>
-                                <td>
-                                    <div class="action-buttons">
-                                        <button class="btn-icon btn-edit" onclick='openEditModal(<?php echo json_encode($user); ?>)'>
-                                            <i class="fas fa-edit"></i> Edit
-                                        </button>
-                                        <button class="btn-icon btn-reset" onclick="confirmReset(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['name'], ENT_QUOTES); ?>')">
-                                            <i class="fas fa-key"></i> Reset
-                                        </button>
-                                        <?php if ($user['id'] != $_SESSION['user_id']): ?>
-                                        <button class="btn-icon btn-delete" onclick="confirmDelete(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['name'], ENT_QUOTES); ?>')">
-                                            <i class="fas fa-trash"></i> Delete
-                                        </button>
-                                        <?php endif; ?>
-                                    </div>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            <?php else: ?>
-                <div class="empty-state">
-                    <i class="fas fa-users-slash"></i>
-                    <p style="font-weight: 600; color: var(--gray-700); margin-top: 10px;">No users found</p>
-                    <p style="font-size: 14px; margin-top: 5px;">Click "Add New User" to create your first user</p>
+            <?php if ($message): ?>
+                <div class="ua-alert ua-alert-<?php echo $messageType === 'success' ? 'success' : 'error'; ?>">
+                    <span><?php echo htmlspecialchars($message); ?></span>
                 </div>
             <?php endif; ?>
+
+            <section class="ua-stats">
+                <article class="ua-stat-card">
+                    <div class="ua-stat-label">Total Accounts</div>
+                    <div class="ua-stat-value"><?php echo number_format($total_users); ?></div>
+                </article>
+                <article class="ua-stat-card">
+                    <div class="ua-stat-label">Administrators</div>
+                    <div class="ua-stat-value"><?php echo number_format($admin_count); ?></div>
+                </article>
+                <article class="ua-stat-card">
+                    <div class="ua-stat-label">Drivers</div>
+                    <div class="ua-stat-value"><?php echo number_format($staff_count); ?></div>
+                </article>
+            </section>
+
+            <section class="ua-panel">
+                <div class="ua-panel-head">
+                    <div>
+                        <h2>Accounts</h2>
+                        <p>Search, filter, and review account access without digging through a crowded list.</p>
+                    </div>
+                </div>
+
+                <form method="get" class="ua-toolbar">
+                    <div class="ua-toolbar-field ua-toolbar-search">
+                        <label for="accountSearch">Search</label>
+                        <input type="text" id="accountSearch" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Search by name or email">
+                    </div>
+                    <div class="ua-toolbar-field">
+                        <label for="roleFilter">Role</label>
+                        <select id="roleFilter" name="role">
+                            <option value="">All Roles</option>
+                            <?php foreach ($role_options as $roleKey => $roleLabel): ?>
+                                <option value="<?php echo htmlspecialchars($roleKey); ?>" <?php echo $role_filter === $roleKey ? 'selected' : ''; ?>><?php echo htmlspecialchars($roleLabel); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="ua-toolbar-field">
+                        <label for="facilityFilter">Facility</label>
+                        <select id="facilityFilter" name="facility">
+                            <option value="">All Facilities</option>
+                            <option value="unassigned" <?php echo $facility_filter === 'unassigned' ? 'selected' : ''; ?>>No Facility</option>
+                            <?php foreach ($facilities as $facility): ?>
+                                <option value="<?php echo htmlspecialchars((string) $facility['id']); ?>" <?php echo $facility_filter === (string) $facility['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($facility['facility_name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="ua-toolbar-field">
+                        <label for="statusFilter">Status</label>
+                        <select id="statusFilter" name="status">
+                            <option value="">All Statuses</option>
+                            <option value="active" <?php echo $status_filter === 'active' ? 'selected' : ''; ?>>Active</option>
+                            <option value="inactive" <?php echo $status_filter === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
+                        </select>
+                    </div>
+                    <div class="ua-toolbar-actions">
+                        <button type="submit" class="ua-secondary-button">Apply</button>
+                        <a href="users.php" class="ua-secondary-button ua-secondary-link">Clear Filters</a>
+                    </div>
+                </form>
+
+                <div class="ua-table-meta">
+                    <span><?php echo number_format($accounts_start); ?>-<?php echo number_format($accounts_end); ?> of <?php echo number_format($filtered_total_users); ?> accounts</span>
+                </div>
+
+                <?php if (count($users) > 0): ?>
+                    <div class="ua-table-wrap">
+                        <table class="ua-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Role</th>
+                                    <th>Facility</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="accountsTableBody">
+                                <?php foreach ($users as $user): ?>
+                                    <?php
+                                    $roleKey = (string) $user['role'];
+                                    $facilityName = $user['facility_name'] ?: 'N/A';
+                                    ?>
+                                    <tr class="ua-account-row">
+                                        <td>
+                                            <div class="ua-name"><?php echo htmlspecialchars($user['name']); ?></div>
+                                            <?php if ((int) $user['id'] === (int) $_SESSION['user_id']): ?>
+                                                <div class="ua-subline">Current session</div>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?php echo htmlspecialchars($user['email']); ?></td>
+                                        <td>
+                                            <span class="ua-role-chip ua-role-<?php echo htmlspecialchars($roleKey); ?>">
+                                                <?php echo htmlspecialchars(users_role_label($roleKey)); ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="ua-facility"><?php echo htmlspecialchars($facilityName); ?></span>
+                                        </td>
+                                        <td>
+                                            <?php $accountStatus = (string) ($user['user_status'] ?? 'active'); ?>
+                                            <span class="ua-status-chip <?php echo users_status_class($accountStatus); ?>">
+                                                <?php echo htmlspecialchars(users_status_label($accountStatus)); ?>
+                                            </span>
+                                        </td>
+                                        <td><?php echo date('d M Y', strtotime($user['created_at'])); ?></td>
+                                        <td>
+                                            <div class="ua-row-actions">
+                                                <button type="button" class="ua-action-edit" onclick='openEditModal(<?php echo json_encode($user); ?>)'>Edit</button>
+                                                <details class="ua-row-menu">
+                                                    <summary class="ua-menu-trigger">More</summary>
+                                                    <div class="ua-menu-panel">
+                                                        <button type="button" class="ua-menu-action" onclick="confirmReset(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['name'], ENT_QUOTES); ?>')">Reset Password</button>
+                                                        <?php if ($user['id'] != $_SESSION['user_id']): ?>
+                                                            <button
+                                                                type="button"
+                                                                class="ua-menu-action"
+                                                                onclick="confirmToggleStatus(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['name'], ENT_QUOTES); ?>', '<?php echo $accountStatus === 'active' ? 'inactive' : 'active'; ?>')"
+                                                            >
+                                                                <?php echo $accountStatus === 'active' ? 'Deactivate Account' : 'Activate Account'; ?>
+                                                            </button>
+                                                        <?php endif; ?>
+                                                        <?php if ($user['id'] != $_SESSION['user_id']): ?>
+                                                            <button type="button" class="ua-menu-action is-danger" onclick="confirmDelete(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['name'], ENT_QUOTES); ?>')">Delete Account</button>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                </details>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php else: ?>
+                    <div class="ua-empty-state">
+                        <h3><?php echo $has_active_filters ? 'No accounts match these filters' : 'No accounts found'; ?></h3>
+                        <p><?php echo $has_active_filters ? 'Try a different search term or clear the current filters.' : 'Create the first account to start assigning roles and access.'; ?></p>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($filtered_total_users > 0 && $total_pages > 1): ?>
+                    <div class="ua-pagination" aria-label="Accounts pages">
+                        <?php
+                        $paginationBase = [
+                            'search' => $search,
+                            'role' => $role_filter,
+                            'facility' => $facility_filter,
+                            'status' => $status_filter,
+                        ];
+                        ?>
+                        <?php if ($accounts_page > 1): ?>
+                            <a class="ua-page-link" href="users.php?<?php echo http_build_query(array_merge($paginationBase, ['page' => $accounts_page - 1])); ?>">Previous</a>
+                        <?php endif; ?>
+
+                        <?php for ($page = 1; $page <= $total_pages; $page++): ?>
+                            <a class="ua-page-link <?php echo $page === $accounts_page ? 'is-active' : ''; ?>" href="users.php?<?php echo http_build_query(array_merge($paginationBase, ['page' => $page])); ?>">
+                                <?php echo htmlspecialchars((string) $page); ?>
+                            </a>
+                        <?php endfor; ?>
+
+                        <?php if ($accounts_page < $total_pages): ?>
+                            <a class="ua-page-link" href="users.php?<?php echo http_build_query(array_merge($paginationBase, ['page' => $accounts_page + 1])); ?>">Next</a>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+            </section>
         </div>
     </div>
 
@@ -1013,49 +1227,77 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
     <div class="modal" id="addModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2><i class="fas fa-user-plus"></i> Add New User</h2>
-                <button class="btn-close" onclick="closeAddModal()"><i class="fas fa-times"></i></button>
+                <div>
+                    <h2>Add Account</h2>
+                    <p>Create a system account with the right role and facility access.</p>
+                </div>
+                <button type="button" class="btn-close" onclick="closeAddModal()">&times;</button>
             </div>
             <form method="POST" action="">
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label><i class="fas fa-user"></i> Full Name <span class="required">*</span></label>
-                        <input type="text" name="name" required placeholder="e.g., John Doe">
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-envelope"></i> Email <span class="required">*</span></label>
-                        <input type="email" name="email" required placeholder="e.g., john@example.com">
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-key"></i> Password <span class="required">*</span></label>
-                        <input type="password" name="password" required placeholder="Minimum 8 characters" value="<?php echo $DEFAULT_PASSWORD; ?>">
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-shield-alt"></i> Role <span class="required">*</span></label>
-                        <select name="role" required>
-                            <option value="">Select Role</option>
-                            <?php if ($is_super_admin): ?>
-                            <option value="super_admin">Super Admin</option>
-                            <?php endif; ?>
-                            <option value="admin">Admin</option>
-                            <option value="facility_admin">Facility Admin</option>
-                            <option value="staff">Driver</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-building"></i> Facility <span class="required">*</span></label>
-                        <select name="facility_id" required <?php echo !$is_super_admin ? 'readonly' : ''; ?>>
-                            <?php foreach ($facilities as $facility): ?>
-                                <option value="<?php echo $facility['id']; ?>" <?php echo (!$is_super_admin && $facility['id'] == $user_facility_id) ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($facility['facility_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
+                <div class="ua-modal-body">
+                    <section class="ua-modal-section">
+                        <div class="ua-modal-section-head">
+                            <div class="ua-modal-section-title">Basic Details</div>
+                            <p>Use the account holder's official details so sign-in and audit trails stay clean.</p>
+                        </div>
+                        <div class="ua-form-grid">
+                            <div class="form-group ua-form-span-full">
+                                <label>Full Name <span class="required">*</span></label>
+                                <input type="text" name="name" required placeholder="e.g. Martha Banda">
+                                <div class="ua-field-note">Use the full name that should appear across the system.</div>
+                            </div>
+                            <div class="form-group ua-form-span-full">
+                                <label>Email <span class="required">*</span></label>
+                                <input type="email" name="email" required placeholder="name@righttocare-zambia.org">
+                                <div class="ua-field-note">Use the organisation email for password resets and account recovery.</div>
+                            </div>
+                            <div class="form-group ua-form-span-full">
+                                <label>Password <span class="required">*</span></label>
+                                <input type="password" name="password" required placeholder="Minimum 8 characters" value="<?php echo $DEFAULT_PASSWORD; ?>">
+                                <div class="ua-field-note">This will be the starting password for the account and can be reset later.</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="ua-modal-section">
+                        <div class="ua-modal-section-head">
+                            <div class="ua-modal-section-title">Role & Access</div>
+                            <p>Facility access depends on the role selected below.</p>
+                        </div>
+                        <div class="ua-form-grid">
+                            <div class="form-group">
+                                <label>Role <span class="required">*</span></label>
+                                <select name="role" id="add_role" required onchange="syncFacilityRequirement('add')">
+                                    <option value="">Select Role</option>
+                                    <?php foreach ($role_options as $roleKey => $roleLabel): ?>
+                                        <option value="<?php echo htmlspecialchars($roleKey); ?>"><?php echo htmlspecialchars($roleLabel); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Facility <span class="required" id="addFacilityRequired"><?php echo $is_super_admin ? '' : '*'; ?></span></label>
+                                <select name="facility_id" id="add_facility_id" <?php echo !$is_super_admin ? 'readonly' : ''; ?>>
+                                    <?php if ($is_super_admin): ?>
+                                        <option value="">No facility assigned</option>
+                                    <?php endif; ?>
+                                    <?php foreach ($facilities as $facility): ?>
+                                        <option value="<?php echo $facility['id']; ?>" <?php echo (!$is_super_admin && $facility['id'] == $user_facility_id) ? 'selected' : ''; ?>>
+                                            <?php echo htmlspecialchars($facility['facility_name']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="ua-field-note" id="addFacilityNote">Facility is required for Facility Admin and Driver accounts.</div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+                <div class="ua-modal-footer">
+                    <div class="ua-modal-footer-note">Facility is required for Facility Admin and Driver accounts.</div>
+                    <div class="ua-modal-footer-actions">
+                        <button type="button" class="ua-secondary-button" onclick="closeAddModal()">Cancel</button>
+                        <button type="submit" name="add_user" class="ua-primary-button">Save Account</button>
                     </div>
                 </div>
-                <button type="submit" name="add_user" class="btn-submit">
-                    <i class="fas fa-save"></i> Create User
-                </button>
             </form>
         </div>
     </div>
@@ -1064,53 +1306,84 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
     <div class="modal" id="editModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2><i class="fas fa-user-edit"></i> Edit User</h2>
-                <button class="btn-close" onclick="closeEditModal()"><i class="fas fa-times"></i></button>
+                <div>
+                    <h2>Edit Account</h2>
+                    <p>Update the account details, role, and facility access.</p>
+                </div>
+                <button type="button" class="btn-close" onclick="closeEditModal()">&times;</button>
             </div>
             <form method="POST" action="">
                 <input type="hidden" name="user_id" id="edit_user_id">
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label><i class="fas fa-user"></i> Full Name <span class="required">*</span></label>
-                        <input type="text" name="name" id="edit_name" required>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-envelope"></i> Email <span class="required">*</span></label>
-                        <input type="email" name="email" id="edit_email" required>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-shield-alt"></i> Role <span class="required">*</span></label>
-                        <select name="role" id="edit_role" required>
-                            <?php if ($is_super_admin): ?>
-                            <option value="super_admin">Super Admin</option>
-                            <?php endif; ?>
-                            <option value="admin">Admin</option>
-                            <option value="facility_admin">Facility Admin</option>
-                            <option value="staff">Driver</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-building"></i> Facility <span class="required">*</span></label>
-                        <select name="facility_id" id="edit_facility_id" required>
-                            <?php foreach ($facilities as $facility): ?>
-                                <option value="<?php echo $facility['id']; ?>">
-                                    <?php echo htmlspecialchars($facility['facility_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
+                <div class="ua-modal-body">
+                    <section class="ua-modal-section">
+                        <div class="ua-modal-section-head">
+                            <div class="ua-modal-section-title">Basic Details</div>
+                            <p>Keep the account name and email aligned to the official organisation record.</p>
+                        </div>
+                        <div class="ua-form-grid">
+                            <div class="form-group ua-form-span-full">
+                                <label>Full Name <span class="required">*</span></label>
+                                <input type="text" name="name" id="edit_name" required placeholder="e.g. Martha Banda">
+                            </div>
+                            <div class="form-group ua-form-span-full">
+                                <label>Email <span class="required">*</span></label>
+                                <input type="email" name="email" id="edit_email" required placeholder="name@righttocare-zambia.org">
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="ua-modal-section">
+                        <div class="ua-modal-section-head">
+                            <div class="ua-modal-section-title">Role & Access</div>
+                            <p>Role changes update what the account can access across the system.</p>
+                        </div>
+                        <div class="ua-form-grid">
+                            <div class="form-group">
+                                <label>Role <span class="required">*</span></label>
+                                <select name="role" id="edit_role" required onchange="syncFacilityRequirement('edit')">
+                                    <?php foreach ($role_options as $roleKey => $roleLabel): ?>
+                                        <option value="<?php echo htmlspecialchars($roleKey); ?>"><?php echo htmlspecialchars($roleLabel); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Facility <span class="required" id="editFacilityRequired"><?php echo $is_super_admin ? '' : '*'; ?></span></label>
+                                <select name="facility_id" id="edit_facility_id" <?php echo !$is_super_admin ? 'readonly' : ''; ?>>
+                                    <?php if ($is_super_admin): ?>
+                                        <option value="">No facility assigned</option>
+                                    <?php endif; ?>
+                                    <?php foreach ($facilities as $facility): ?>
+                                        <option value="<?php echo $facility['id']; ?>">
+                                            <?php echo htmlspecialchars($facility['facility_name']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="ua-field-note" id="editFacilityNote">Facility is required for Facility Admin and Driver accounts.</div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+                <div class="ua-modal-footer">
+                    <div class="ua-modal-footer-note">Status changes are managed from the account row menu.</div>
+                    <div class="ua-modal-footer-actions">
+                        <button type="button" class="ua-secondary-button" onclick="closeEditModal()">Cancel</button>
+                        <button type="submit" name="edit_user" class="ua-primary-button">Save Account</button>
                     </div>
                 </div>
-                <button type="submit" name="edit_user" class="btn-submit">
-                    <i class="fas fa-save"></i> Update User
-                </button>
             </form>
         </div>
     </div>
 
-    <!-- Hidden forms for reset and delete -->
+    <!-- Hidden forms for reset, status toggle, and delete -->
     <form method="POST" id="resetForm" style="display: none;">
         <input type="hidden" name="user_id" id="reset_user_id">
         <input type="hidden" name="reset_password" value="1">
+    </form>
+
+    <form method="POST" id="statusForm" style="display: none;">
+        <input type="hidden" name="user_id" id="status_user_id">
+        <input type="hidden" name="target_status" id="status_target_status">
+        <input type="hidden" name="toggle_user_status" value="1">
     </form>
 
     <form method="POST" id="deleteForm" style="display: none;">
@@ -1119,8 +1392,42 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
     </form>
 
     <script>
+        const facilityRequirementText = {
+            super_admin: 'No facility is required for a Super Admin account.',
+            admin: 'Facility is optional for Admin accounts.',
+            facility_admin: 'Facility is required for Facility Admin accounts.',
+            staff: 'Facility is required for Driver accounts.'
+        };
+
+        function roleNeedsFacility(role) {
+            return ['facility_admin', 'staff'].includes(role);
+        }
+
+        function syncFacilityRequirement(prefix) {
+            const roleField = document.getElementById(prefix + '_role');
+            const facilityField = document.getElementById(prefix + '_facility_id');
+            const requiredMarker = document.getElementById(prefix + 'FacilityRequired');
+            const note = document.getElementById(prefix + 'FacilityNote');
+
+            if (!roleField || !facilityField || !requiredMarker || !note) {
+                return;
+            }
+
+            const role = roleField.value;
+            const requiresFacility = roleNeedsFacility(role);
+
+            facilityField.required = requiresFacility;
+            requiredMarker.textContent = requiresFacility ? '*' : '';
+            note.textContent = facilityRequirementText[role] || 'Choose the role first to confirm facility requirements.';
+
+            <?php if (!$is_super_admin): ?>
+            facilityField.value = '<?php echo htmlspecialchars((string) $user_facility_id, ENT_QUOTES); ?>';
+            <?php endif; ?>
+        }
+
         function openAddModal() {
             document.getElementById('addModal').classList.add('active');
+            syncFacilityRequirement('add');
         }
 
         function closeAddModal() {
@@ -1132,8 +1439,9 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
             document.getElementById('edit_name').value = user.name;
             document.getElementById('edit_email').value = user.email;
             document.getElementById('edit_role').value = user.role;
-            document.getElementById('edit_facility_id').value = user.facility_id;
+            document.getElementById('edit_facility_id').value = user.facility_id || '';
             document.getElementById('editModal').classList.add('active');
+            syncFacilityRequirement('edit');
         }
 
         function closeEditModal() {
@@ -1147,8 +1455,17 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
             }
         }
 
+        function confirmToggleStatus(userId, userName, targetStatus) {
+            const actionLabel = targetStatus === 'inactive' ? 'deactivate' : 'activate';
+            if (confirm(`Are you sure you want to ${actionLabel} "${userName}"?`)) {
+                document.getElementById('status_user_id').value = userId;
+                document.getElementById('status_target_status').value = targetStatus;
+                document.getElementById('statusForm').submit();
+            }
+        }
+
         function confirmDelete(userId, userName) {
-            if (confirm(`Are you sure you want to delete user "${userName}"? This action cannot be undone.`)) {
+            if (confirm(`Are you sure you want to delete account "${userName}"? This action cannot be undone.`)) {
                 document.getElementById('delete_user_id').value = userId;
                 document.getElementById('deleteForm').submit();
             }
@@ -1163,16 +1480,27 @@ $staff_count = count(array_filter($users, function($u) { return $u['role'] === '
             if (e.target === this) closeEditModal();
         });
 
+        document.addEventListener('click', function(e) {
+            document.querySelectorAll('.ua-row-menu[open]').forEach((menu) => {
+                if (!menu.contains(e.target)) {
+                    menu.removeAttribute('open');
+                }
+            });
+        });
+
         // Auto-hide alert after 5 seconds
         <?php if ($message): ?>
             setTimeout(() => {
-                const alert = document.querySelector('.alert');
+                const alert = document.querySelector('.ua-alert');
                 if (alert) {
                     alert.style.animation = 'slideDown 0.3s reverse';
                     setTimeout(() => alert.remove(), 300);
                 }
             }, 5000);
         <?php endif; ?>
+
+        syncFacilityRequirement('add');
+        syncFacilityRequirement('edit');
     </script>
 </body>
 </html>

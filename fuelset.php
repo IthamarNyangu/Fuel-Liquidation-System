@@ -208,6 +208,8 @@ $historyFilter = strtolower(trim((string) ($_GET['history_filter'] ?? 'all')));
 if (!in_array($historyFilter, ['all', 'petrol', 'diesel'], true)) {
     $historyFilter = 'all';
 }
+$historyPage = max(1, (int) ($_GET['history_page'] ?? 1));
+$historyPerPage = 6;
 
 $settingsStmt = $pdo->query('SELECT * FROM settings WHERE id = 1');
 $settings = $settingsStmt->fetch(PDO::FETCH_ASSOC) ?: [
@@ -313,13 +315,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_price'])) {
     }
 }
 
-$historySql = 'SELECT * FROM fuel_price_history';
 $historyParams = [];
+$historyWhereSql = '';
 if ($historyFilter !== 'all') {
-    $historySql .= ' WHERE fuel_type = ?';
+    $historyWhereSql = ' WHERE fuel_type = ?';
     $historyParams[] = $historyFilter;
 }
-$historySql .= ' ORDER BY created_at DESC LIMIT 40';
+$historyCountStmt = $pdo->prepare('SELECT COUNT(*) FROM fuel_price_history' . $historyWhereSql);
+$historyCountStmt->execute($historyParams);
+$historyTotalItems = (int) $historyCountStmt->fetchColumn();
+$historyTotalPages = max(1, (int) ceil($historyTotalItems / $historyPerPage));
+$historyPage = min($historyPage, $historyTotalPages);
+$historyOffset = ($historyPage - 1) * $historyPerPage;
+
+$historySql = 'SELECT * FROM fuel_price_history' . $historyWhereSql . ' ORDER BY created_at DESC LIMIT ' . (int) $historyPerPage . ' OFFSET ' . (int) $historyOffset;
 $historyStmt = $pdo->prepare($historySql);
 $historyStmt->execute($historyParams);
 $priceHistory = $historyStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -563,6 +572,26 @@ $selectedCurrentPrice = (float) ($formData['fuel_type'] === 'diesel' ? ($setting
                         </tbody>
                     </table>
                 </div>
+                <?php if ($historyTotalPages > 1): ?>
+                    <div class="fps-pagination" aria-label="Price history pages">
+                        <?php if ($historyPage > 1): ?>
+                            <a class="fps-page-link" href="fuelset.php?<?php echo http_build_query(['history_filter' => $historyFilter, 'history_page' => $historyPage - 1]); ?>">Previous</a>
+                        <?php endif; ?>
+
+                        <?php for ($page = 1; $page <= $historyTotalPages; $page++): ?>
+                            <a
+                                class="fps-page-link <?php echo $page === $historyPage ? 'is-active' : ''; ?>"
+                                href="fuelset.php?<?php echo http_build_query(['history_filter' => $historyFilter, 'history_page' => $page]); ?>"
+                            >
+                                <?php echo fuel_h($page); ?>
+                            </a>
+                        <?php endfor; ?>
+
+                        <?php if ($historyPage < $historyTotalPages): ?>
+                            <a class="fps-page-link" href="fuelset.php?<?php echo http_build_query(['history_filter' => $historyFilter, 'history_page' => $historyPage + 1]); ?>">Next</a>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
             <?php else: ?>
                 <div class="fps-empty-state">
                     <h3>No price changes found</h3>
