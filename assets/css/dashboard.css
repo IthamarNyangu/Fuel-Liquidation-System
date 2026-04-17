@@ -251,7 +251,7 @@
         .main-content {
             flex: 1;
             margin-left: 280px;
-            padding: 30px;
+            padding: 0 30px 30px;
             transition: margin-left 0.3s;
         }
 
@@ -265,18 +265,21 @@
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid rgba(53, 98, 124, 0.16);
-            padding: 25px 30px;
-            border-radius: 20px;
-            margin-bottom: 30px;
+            padding: 18px 30px;
+            border-radius: 0;
+            margin: 0 -30px 30px;
             box-shadow: 0 14px 30px rgba(22, 32, 42, 0.08);
             display: flex;
             align-items: center;
             justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 900;
         }
 
         .header h1 {
             color: var(--gray-900);
-            font-size: 32px;
+            font-size: 28px;
             font-weight: 700;
             text-shadow: none;
         }

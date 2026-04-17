@@ -41,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $_SESSION['user_email'] = $user['email'];
                 $_SESSION['user_role'] = $user['role'];
                 $_SESSION['facility_id'] = $user['facility_id'];
+                $_SESSION['province_id'] = $user['facility_id'];
                 $_SESSION['is_super_admin'] = $user['is_super_admin'];
                 $_SESSION['is_facility_admin'] = $user['is_facility_admin'];
                 $_SESSION['logged_in'] = true;

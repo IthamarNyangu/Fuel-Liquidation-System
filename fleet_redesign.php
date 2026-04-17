@@ -62,56 +62,69 @@ function fleet_is_valid_km_input($value): bool
 
 function fleet_current_user_context(): array
 {
-    $role = $_SESSION['user_role'] ?? 'staff';
-    $isFacilityAdmin = !empty($_SESSION['is_facility_admin']) || $role === 'facility_admin';
+    $role = normalizeRole($_SESSION['user_role'] ?? 'staff');
 
     return [
         'id' => (int) ($_SESSION['user_id'] ?? 0),
         'name' => $_SESSION['user_name'] ?? 'User',
         'email' => $_SESSION['user_email'] ?? '',
         'role' => $role,
-        'facility_id' => getUserFacilityId(),
-        'is_super_admin' => isSuperAdmin(),
-        'is_facility_admin' => $isFacilityAdmin,
+        'facility_id' => getUserProvinceId(),
+        'province_id' => getUserProvinceId(),
+        'is_super_admin' => isFleetManager(),
+        'is_facility_admin' => isProvincialAdmin(),
     ];
 }
 
 function fleet_role_label(string $role, bool $isFacilityAdmin = false): string
 {
-    if ($isFacilityAdmin && $role !== 'super_admin') {
-        return 'Facility Admin';
-    }
+    $normalizedRole = normalizeRole($role);
 
-    $labels = [
-        'staff' => 'Driver',
-        'facility_admin' => 'Facility Admin',
-        'admin' => 'Admin',
-        'approver' => 'Approver',
-        'super_admin' => 'Super Admin',
-    ];
+    return match ($normalizedRole) {
+        'fleet_manager' => 'Fleet Manager',
+        'provincial_admin' => 'Provincial Admin',
+        default => 'Driver',
+    };
+}
 
-    return $labels[$role] ?? ucwords(str_replace('_', ' ', $role));
+function fleet_is_driver(array $user): bool
+{
+    return ($user['role'] ?? '') === 'driver';
+}
+
+function fleet_is_fleet_overview_user(array $user): bool
+{
+    return in_array($user['role'] ?? '', ['provincial_admin', 'fleet_manager'], true);
 }
 
 function fleet_is_driver_flow_user(array $user): bool
 {
-    return in_array($user['role'], ['staff', 'admin', 'approver', 'super_admin'], true);
+    return in_array($user['role'], ['driver', 'provincial_admin', 'fleet_manager'], true);
 }
 
 function fleet_is_reviewer(array $user): bool
 {
-    return $user['is_super_admin']
-        || $user['is_facility_admin']
-        || in_array($user['role'], ['facility_admin', 'admin'], true);
+    return in_array($user['role'], ['provincial_admin', 'fleet_manager'], true);
 }
 
-function fleet_require_driver_access(array $user): void
+function fleet_require_vehicle_hub_access(array $user): void
 {
     if (fleet_is_driver_flow_user($user)) {
         return;
     }
 
-    $_SESSION['error_message'] = 'You do not have access to the new driver workflow.';
+    $_SESSION['error_message'] = 'You do not have access to the vehicle workspace.';
+    header('Location: dashboard.php');
+    exit();
+}
+
+function fleet_require_driver_access(array $user): void
+{
+    if (fleet_is_driver($user)) {
+        return;
+    }
+
+    $_SESSION['error_message'] = 'This page is only available to drivers.';
     header('Location: dashboard.php');
     exit();
 }
@@ -230,7 +243,7 @@ function fleet_get_accessible_vehicles(PDO $pdo, array $user): array
 
     if ($user['is_super_admin']) {
         $sql .= " ORDER BY v.vehicle_name, v.number_plate";
-    } elseif (in_array($user['role'], ['admin', 'approver'], true)) {
+    } elseif (($user['role'] ?? '') === 'provincial_admin') {
         $sql .= " AND v.facility_id = :facility_id ORDER BY v.vehicle_name, v.number_plate";
         $params[':facility_id'] = $user['facility_id'];
     } else {
@@ -436,8 +449,12 @@ function fleet_fetch_confirmation_users(PDO $pdo, ?int $facilityId = null): arra
         $stmt = $pdo->prepare("
             SELECT DISTINCT id, name, email, role
             FROM users
-            WHERE role IN ('admin', 'super_admin')
-               OR (facility_id = ? AND role = 'facility_admin')
+            WHERE user_status = 'active'
+              AND (
+                    is_super_admin = 1
+                    OR role IN ('super_admin', 'admin', 'facility_admin')
+                    OR (facility_id = ? AND is_facility_admin = 1)
+                  )
             ORDER BY name
         ");
         $stmt->execute([$facilityId]);
@@ -448,7 +465,12 @@ function fleet_fetch_confirmation_users(PDO $pdo, ?int $facilityId = null): arra
     $stmt = $pdo->query("
         SELECT id, name, email, role
         FROM users
-        WHERE role IN ('facility_admin', 'admin', 'super_admin')
+        WHERE user_status = 'active'
+          AND (
+                is_super_admin = 1
+                OR is_facility_admin = 1
+                OR role IN ('facility_admin', 'admin', 'super_admin')
+              )
         ORDER BY name
     ");
 
@@ -649,21 +671,33 @@ function fleet_week_is_editable(?array $weekly): bool
 function fleet_render_shell_start(string $title, string $activeNav, array $user, string $subtitle = ''): void
 {
     $flash = fleet_consume_flash();
-    $cssVersion = @filemtime(__DIR__ . '/fleet_redesign.css') ?: time();
+    $cssVersion = @filemtime(__DIR__ . '/assets/css/fleet_redesign.css') ?: time();
     $roleLabel = fleet_role_label($user['role'], $user['is_facility_admin']);
-    $navItems = [
-        ['key' => 'my_vehicle', 'href' => 'my_vehicle.php', 'icon' => 'fa-car-side', 'label' => 'My Vehicle'],
-        ['key' => 'movement_leg', 'href' => 'log_movement_leg.php', 'icon' => 'fa-route', 'label' => 'Log Movement'],
-        ['key' => 'fuel_purchase', 'href' => 'record_fuel_purchase.php', 'icon' => 'fa-receipt', 'label' => 'Record Fuel Purchase'],
-        ['key' => 'weekly_liquidation', 'href' => 'weekly_liquidation.php', 'icon' => 'fa-clipboard-check', 'label' => 'Weekly Liquidation'],
-    ];
+    $userDisplayName = $user['role'] === 'fleet_manager' ? 'Fleet Manager' : (string) $user['name'];
+    $userDisplayRole = $user['role'] === 'fleet_manager' ? '' : $roleLabel;
+    $brandTitle = 'Driver Hub';
+    $myVehicleLabel = 'My Vehicle';
+    $navItems = [];
+
+    if (fleet_is_driver($user)) {
+        $navItems = [
+            ['key' => 'my_vehicle', 'href' => 'my_vehicle.php', 'icon' => 'fa-car-side', 'label' => 'My Vehicle'],
+            ['key' => 'movement_leg', 'href' => 'log_movement_leg.php', 'icon' => 'fa-route', 'label' => 'Log Movement'],
+            ['key' => 'fuel_purchase', 'href' => 'record_fuel_purchase.php', 'icon' => 'fa-receipt', 'label' => 'Record Fuel Purchase'],
+            ['key' => 'weekly_liquidation', 'href' => 'weekly_liquidation.php', 'icon' => 'fa-clipboard-check', 'label' => 'Vehicle Liquidation'],
+        ];
+    } else {
+        $brandTitle = $user['role'] === 'fleet_manager' ? 'Fleet Hub' : 'Province Hub';
+        $myVehicleLabel = 'My Fleet';
+        $navItems[] = ['key' => 'my_vehicle', 'href' => 'my_vehicle.php', 'icon' => 'fa-car-side', 'label' => $myVehicleLabel];
+    }
 
     if (fleet_is_reviewer($user)) {
         $navItems[] = [
-            'key' => 'weekly_review',
-            'href' => 'facility_liquidation_review.php',
+            'key' => 'province_liquidation',
+            'href' => 'province_liquidation.php',
             'icon' => 'fa-user-check',
-            'label' => 'Weekly Review',
+            'label' => 'Province Liquidation',
         ];
     }
 
@@ -673,8 +707,9 @@ function fleet_render_shell_start(string $title, string $activeNav, array $user,
     echo '<meta charset="UTF-8">';
     echo '<meta name="viewport" content="width=device-width, initial-scale=1.0">';
     echo '<title>' . fleet_h($title) . '</title>';
+    require __DIR__ . '/favicon_links.php';
     echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">';
-    echo '<link rel="stylesheet" href="fleet_redesign.css?v=' . urlencode((string) $cssVersion) . '">';
+    echo '<link rel="stylesheet" href="assets/css/fleet_redesign.css?v=' . urlencode((string) $cssVersion) . '">';
     echo '</head>';
     echo '<body>';
     echo '<div class="workflow-shell">';
@@ -684,14 +719,16 @@ function fleet_render_shell_start(string $title, string $activeNav, array $user,
     echo '<i class="fas fa-bars"></i>';
     echo '</button>';
     echo '<div class="workflow-brand-copy">';
-    echo '<div class="workflow-brand-title">Driver Hub</div>';
+    echo '<div class="workflow-brand-title">' . fleet_h($brandTitle) . '</div>';
     echo '</div>';
     echo '</div>';
     echo '<div class="workflow-user">';
     echo '<div class="workflow-user-avatar"><i class="fas fa-user"></i></div>';
     echo '<div class="workflow-user-copy">';
-    echo '<div class="workflow-user-name">' . fleet_h($user['name']) . '</div>';
-    echo '<div class="workflow-user-role">' . fleet_h($roleLabel) . '</div>';
+    echo '<div class="workflow-user-name">' . fleet_h($userDisplayName) . '</div>';
+    if ($userDisplayRole !== '') {
+        echo '<div class="workflow-user-role">' . fleet_h($userDisplayRole) . '</div>';
+    }
     echo '</div>';
     echo '</div>';
     echo '<nav class="workflow-nav">';
@@ -704,6 +741,7 @@ function fleet_render_shell_start(string $title, string $activeNav, array $user,
     }
     echo '</nav>';
     echo '<div class="workflow-sidebar-footer">';
+    echo '<a class="workflow-nav-link subtle" href="dashboard.php" title="Back to Dashboard"><i class="fas fa-arrow-left"></i><span>Back to Dashboard</span></a>';
     echo '<a class="workflow-nav-link subtle" href="logout.php" title="Logout"><i class="fas fa-sign-out-alt"></i><span>Logout</span></a>';
     echo '</div>';
     echo '</aside>';

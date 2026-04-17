@@ -1,0 +1,88 @@
+<?php
+require_once __DIR__ . '/../../admin_auth.php';
+require_once __DIR__ . '/../../db_connect.php';
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    $vehicle_id = intval($_POST['vehicle_id']);
+    $user_id = intval($_POST['user_id']);
+    $assigned_date = $_POST['assigned_date'];
+    $notes = trim($_POST['notes']);
+    $assigned_by = $_SESSION['user_id'];
+    
+    // Validate inputs
+    if (empty($vehicle_id) || empty($user_id) || empty($assigned_date)) {
+        $_SESSION['error_message'] = "All required fields must be filled";
+        header("Location: manage_vehicles.php");
+        exit();
+    }
+    
+    // Begin transaction
+    $conn->begin_transaction();
+    
+    try {
+        // Ensure the selected account can still be assigned
+        $user_check_query = "SELECT name FROM users WHERE id = ? AND user_status = 'active' LIMIT 1";
+        $stmt = $conn->prepare($user_check_query);
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $user = $result->fetch_assoc();
+        $stmt->close();
+
+        if (!$user) {
+            throw new Exception("The selected driver account is inactive or no longer available.");
+        }
+
+        // Deactivate any existing assignments for this vehicle
+        $deactivate_query = "UPDATE vehicle_assignments 
+                            SET is_active = 0 
+                            WHERE vehicle_id = ? AND is_active = 1";
+        $stmt = $conn->prepare($deactivate_query);
+        $stmt->bind_param("i", $vehicle_id);
+        $stmt->execute();
+        $stmt->close();
+        
+        // Create new assignment
+        $insert_query = "INSERT INTO vehicle_assignments 
+                        (vehicle_id, user_id, assigned_date, assigned_by, notes, is_active) 
+                        VALUES (?, ?, ?, ?, ?, 1)";
+        $stmt = $conn->prepare($insert_query);
+        $stmt->bind_param("iisis", $vehicle_id, $user_id, $assigned_date, $assigned_by, $notes);
+        $stmt->execute();
+        $stmt->close();
+        
+        // Update vehicle's current_driver_id
+        $update_vehicle_query = "UPDATE vehicles SET current_driver_id = ? WHERE id = ?";
+        $stmt = $conn->prepare($update_vehicle_query);
+        $stmt->bind_param("ii", $user_id, $vehicle_id);
+        $stmt->execute();
+        $stmt->close();
+        
+        // Get vehicle and user names for success message
+        $vehicle_query = "SELECT vehicle_name, number_plate FROM vehicles WHERE id = ?";
+        $stmt = $conn->prepare($vehicle_query);
+        $stmt->bind_param("i", $vehicle_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $vehicle = $result->fetch_assoc();
+        $stmt->close();
+        
+        // Commit transaction
+        $conn->commit();
+        
+        $_SESSION['success_message'] = "Vehicle " . htmlspecialchars($vehicle['vehicle_name']) . " (" . htmlspecialchars($vehicle['number_plate']) . ") assigned to " . htmlspecialchars($user['name']) . " successfully!";
+        
+    } catch (Exception $e) {
+        // Rollback on error
+        $conn->rollback();
+        $_SESSION['error_message'] = "Error assigning vehicle: " . $e->getMessage();
+    }
+    
+} else {
+    $_SESSION['error_message'] = "Invalid request method";
+}
+
+$conn->close();
+header("Location: manage_vehicles.php");
+exit();
+?>

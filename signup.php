@@ -5,6 +5,10 @@ require_once 'db_connect.php';
 $errors = [];
 $success = '';
 
+$_SESSION['error_message'] = 'Account self-registration is disabled. Contact the Fleet Manager to create an account for you.';
+header("Location: index.php");
+exit();
+
 // Fetch active facilities for dropdown
 $facilities = [];
 try {
