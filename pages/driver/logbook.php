@@ -45,7 +45,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_vehicle_mileage' && isset
 $stmt = $pdo->prepare("SELECT name, email, role FROM users WHERE id = ?");
 $stmt->execute([$current_user_id]);
 $user = $stmt->fetch(PDO::FETCH_ASSOC);
-$user_role = $user['role'] ?? 'staff';
+$user_role = normalizeRole($user['role'] ?? 'driver');
 
 // Handle form submission for new trip
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_trip'])) {
@@ -191,7 +191,7 @@ if (!$is_super_admin && $user_facility_id) {
 }
 
 // Apply staff filter (staff can only see their own entries)
-if ($user_role === 'staff') {
+if ($user_role === 'driver') {
     $logQuery .= " AND l.driver_id = ?";
     $logParams[] = $current_user_id;
 }
@@ -805,7 +805,7 @@ if ($is_super_admin) {
         <div class="warning-box">
             <i class="fas fa-car-slash"></i>
             <h3>No Vehicles Assigned</h3>
-            <p>You don't have any vehicles assigned to you yet. Please contact your facility administrator to get vehicle access.</p>
+            <p>You don't have any vehicles assigned to you yet. Please contact your Provincial Admin to get vehicle access.</p>
         </div>
         <?php endif; ?>
 
@@ -816,7 +816,7 @@ if ($is_super_admin) {
                     <i class="fas fa-list-alt"></i>
                 </div>
                 <div class="stat-label">
-                    <?php if ($user_role === 'staff'): ?>
+                    <?php if ($user_role === 'driver'): ?>
                         My Logs
                     <?php elseif (!$is_super_admin): ?>
                         Total Logs (Your Facility)
@@ -831,7 +831,7 @@ if ($is_super_admin) {
                     <i class="fas fa-road"></i>
                 </div>
                 <div class="stat-label">
-                    <?php if ($user_role === 'staff'): ?>
+                    <?php if ($user_role === 'driver'): ?>
                         My Distance
                     <?php elseif (!$is_super_admin): ?>
                         Total Distance (Your Facility)
@@ -954,7 +954,7 @@ if ($is_super_admin) {
             <div class="empty-state" style="padding: 40px 20px;">
                 <i class="fas fa-car-slash"></i>
                 <h3>Cannot Add Trip</h3>
-                <p>No vehicles are assigned to you. Please contact your facility administrator.</p>
+                <p>No vehicles are assigned to you. Please contact your Provincial Admin.</p>
             </div>
             <?php endif; ?>
         </div>
@@ -963,7 +963,7 @@ if ($is_super_admin) {
         <div class="card">
             <h2 class="card-title">
                 <i class="fas fa-history"></i>
-                <?php if ($user_role === 'staff'): ?>
+                <?php if ($user_role === 'driver'): ?>
                     My Log Entries
                 <?php elseif (!$is_super_admin): ?>
                     All Log Entries (Your Facility)
@@ -1042,7 +1042,7 @@ if ($is_super_admin) {
                     <i class="fas fa-book"></i>
                     <h3>No Log Entries Yet</h3>
                     <p>
-                        <?php if ($user_role === 'staff'): ?>
+                        <?php if ($user_role === 'driver'): ?>
                             You haven't created any trip logs yet
                         <?php elseif (!$is_super_admin): ?>
                             No trip logs have been created in your facility yet

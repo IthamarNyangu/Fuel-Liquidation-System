@@ -11,7 +11,7 @@ $selectedProvinceId = $user['is_super_admin'] ? max(0, (int) ($_GET['province_id
 $provinceFilterQuery = $selectedProvinceId > 0 ? '&province_id=' . urlencode((string) $selectedProvinceId) : '';
 
 if (!fleet_schema_ready($pdo)) {
-    fleet_render_schema_required($user, 'Province Liquidation', 'province_liquidation');
+    fleet_render_schema_required($user, 'Reconciliation Review', 'province_liquidation');
 }
 
 $scopeSql = '';
@@ -58,17 +58,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['weekly_liquidation_id
         $weekly = $detailStmt->fetch();
 
         if (!$weekly) {
-            throw new RuntimeException('The selected liquidation package could not be found in your review scope.');
+            throw new RuntimeException('The selected reconciliation package could not be found in your review scope.');
         }
 
-        $weekly = fleet_recalculate_weekly($pdo, (int) $weekly['id']);
+        $weekly = array_merge($weekly, fleet_recalculate_weekly($pdo, (int) $weekly['id']));
 
         if (!in_array($weekly['status'], ['submitted', 'under_review'], true)) {
-            throw new RuntimeException('Only submitted liquidation packages can be approved or returned.');
+            throw new RuntimeException('Only submitted reconciliation packages can be approved or returned.');
         }
 
         if ($reviewAction === 'return' && $reviewNotes === '') {
-            throw new RuntimeException('Review notes are required when returning a liquidation package.');
+            throw new RuntimeException('Review notes are required when returning a reconciliation package.');
         }
 
         $pdo->beginTransaction();
@@ -139,8 +139,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['weekly_liquidation_id
         fleet_set_flash(
             'success',
             $reviewAction === 'approve'
-                ? 'Vehicle liquidation approved.'
-                : 'Vehicle liquidation returned to the driver for correction.'
+                ? 'Vehicle reconciliation approved.'
+                : 'Vehicle reconciliation returned to the driver for correction.'
         );
         header('Location: ' . $selfPath . '?weekly_id=' . urlencode((string) $weeklyId) . $provinceFilterQuery);
         exit();
@@ -202,14 +202,14 @@ if ($selectedWeeklyId > 0) {
     $selectedWeekly = $detailStmt->fetch() ?: null;
 
     if ($selectedWeekly) {
-        $selectedWeekly = fleet_recalculate_weekly($pdo, (int) $selectedWeekly['id']);
+        $selectedWeekly = array_merge($selectedWeekly, fleet_recalculate_weekly($pdo, (int) $selectedWeekly['id']));
         $selectedTripLegs = fleet_fetch_weekly_trip_legs($pdo, (int) $selectedWeekly['id']);
         $selectedFuelPurchases = fleet_fetch_weekly_fuel_purchases($pdo, (int) $selectedWeekly['id']);
     }
 }
 
 fleet_render_shell_start(
-    'Province Liquidation',
+    'Reconciliation Review',
     'province_liquidation',
     $user,
     ''
@@ -220,7 +220,7 @@ if ($pageError !== '') {
 }
 
 echo '<section class="panel">';
-echo '<div class="panel-header"><div><h2>Province Liquidation Queue</h2></div></div>';
+echo '<div class="panel-header"><div><h2>Province Reconciliation Queue</h2></div></div>';
 if ($provinceOptions) {
     echo '<div class="vehicle-switcher" style="margin-bottom:18px;">';
     echo '<a class="vehicle-pill' . ($selectedProvinceId === 0 ? ' active' : '') . '" href="' . fleet_h($selfPath) . '"><span>All Provinces</span></a>';
@@ -235,8 +235,8 @@ echo '<div class="queue-list">';
 if (!$queue) {
     echo '<div class="empty-state">';
     echo '<div class="empty-state-icon"><i class="fas fa-user-check"></i></div>';
-    echo '<h3>No liquidation packages waiting</h3>';
-    echo '<p>When drivers submit vehicle liquidations, they will appear here for province-level review.</p>';
+    echo '<h3>No reconciliation packages waiting</h3>';
+    echo '<p>When drivers submit vehicle reconciliations, they will appear here for province-level review.</p>';
     echo '</div>';
 } else {
     foreach ($queue as $weeklyItem) {
@@ -258,7 +258,7 @@ echo '<div class="stack">';
 if (!$selectedWeekly) {
     echo '<div class="empty-state">';
     echo '<div class="empty-state-icon"><i class="fas fa-clipboard-check"></i></div>';
-    echo '<h3>Select a liquidation package</h3>';
+    echo '<h3>Select a reconciliation package</h3>';
     echo '<p>Choose an item from the queue to inspect the movement legs, fuel purchases, and receipts in detail.</p>';
     echo '</div>';
 } else {
@@ -282,9 +282,9 @@ if (!$selectedWeekly) {
     }
     echo '<form method="post" class="form-grid" style="margin-top:16px;">';
     echo '<input type="hidden" name="weekly_liquidation_id" value="' . fleet_h($selectedWeekly['id']) . '">';
-    echo '<div class="form-group span-12"><label for="review_notes">Review Notes</label><textarea id="review_notes" name="review_notes" placeholder="Add notes for the driver or for audit history. Notes are required if you return the liquidation package."></textarea></div>';
+    echo '<div class="form-group span-12"><label for="review_notes">Review Notes</label><textarea id="review_notes" name="review_notes" placeholder="Add notes for the driver or for audit history. Notes are required if you return the reconciliation package."></textarea></div>';
     echo '<div class="form-group span-12"><div class="button-row">';
-    echo '<button class="button" type="submit" name="review_action" value="approve" ' . ($canReviewNow ? '' : 'disabled') . '><i class="fas fa-check"></i>Approve Liquidation</button>';
+    echo '<button class="button" type="submit" name="review_action" value="approve" ' . ($canReviewNow ? '' : 'disabled') . '><i class="fas fa-check"></i>Approve Reconciliation</button>';
     echo '<button class="button-secondary" type="submit" name="review_action" value="return" ' . ($canReviewNow ? '' : 'disabled') . '><i class="fas fa-reply"></i>Return to Driver</button>';
     echo '</div></div>';
     echo '</form>';
@@ -293,7 +293,7 @@ if (!$selectedWeekly) {
     echo '<section class="panel" style="margin-bottom:0;">';
     echo '<div class="panel-header"><div><h2>Movement Legs</h2><p>Review the trip legs for completeness, odometer continuity, and purpose clarity.</p></div></div>';
     if (!$selectedTripLegs) {
-        echo '<p class="helper-text">No movement legs are attached to this liquidation package.</p>';
+        echo '<p class="helper-text">No movement legs are attached to this reconciliation package.</p>';
     } else {
         echo '<div class="data-list">';
         foreach ($selectedTripLegs as $trip) {
@@ -325,7 +325,7 @@ if (!$selectedWeekly) {
     echo '<section class="panel" style="margin-bottom:0;">';
     echo '<div class="panel-header"><div><h2>Fuel Purchases</h2><p>Check amount, litres, station, receipt number, and the attached receipt for each purchase.</p></div></div>';
     if (!$selectedFuelPurchases) {
-        echo '<p class="helper-text">No fuel purchases are attached to this liquidation package.</p>';
+        echo '<p class="helper-text">No fuel purchases are attached to this reconciliation package.</p>';
     } else {
         echo '<div class="data-list">';
         foreach ($selectedFuelPurchases as $purchase) {

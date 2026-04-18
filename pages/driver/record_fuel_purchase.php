@@ -35,6 +35,12 @@ if ($selectedVehicle) {
         $selectedVehicle['facility_id'],
     ]);
     $cardAccounts = $cardStmt->fetchAll();
+    if (!$cardAccounts && !empty($selectedVehicle['float_account_name'])) {
+        $syncedCard = fleet_ensure_vehicle_card_account($pdo, $selectedVehicle, $user['id']);
+        if ($syncedCard) {
+            $cardAccounts = [$syncedCard];
+        }
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
@@ -106,6 +112,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
             throw new RuntimeException('The selected card fuel type does not match the vehicle fuel type.');
         }
 
+        $issueNotes = [];
+        $previousCardBalance = isset($selectedCard['current_balance'])
+            ? round((float) $selectedCard['current_balance'], 2)
+            : round((float) ($selectedVehicle['float_balance'] ?? 0), 2);
+        $newCardBalance = round($previousCardBalance - $amount, 2);
+        if ($newCardBalance < 0) {
+            $issueNotes[] = 'Recorded fuel amount pushes the TOM card balance below zero. Verify whether a top-up is still outstanding.';
+        }
+
         $allowedMimeTypes = [
             'image/jpeg' => 'jpg',
             'image/png' => 'png',
@@ -130,7 +145,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
         }
         $movedFilePath = $targetPath;
 
-        $issueNotes = [];
         if ($odometerAtRefill > $latestKnown) {
             $issueNotes[] = 'Refill odometer is ahead of the last known reading. Check whether a movement leg is still missing before this refuel.';
         }
@@ -210,10 +224,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
             SET current_mileage = CASE
                 WHEN current_mileage IS NULL OR current_mileage < ? THEN ?
                 ELSE current_mileage
-            END
+            END,
+                float_balance = ?
             WHERE id = ?
         ");
-        $vehicleUpdateStmt->execute([$odometerAtRefill, $odometerAtRefill, $selectedVehicle['id']]);
+        $vehicleUpdateStmt->execute([$odometerAtRefill, $odometerAtRefill, $newCardBalance, $selectedVehicle['id']]);
+
+        $cardBalanceStmt = $pdo->prepare("
+            UPDATE card_accounts
+            SET current_balance = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ");
+        $cardBalanceStmt->execute([$newCardBalance, $cardAccountId]);
 
         $weekly = fleet_ensure_weekly_liquidation(
             $pdo,
@@ -229,7 +252,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
 
         fleet_set_flash(
             'success',
-            'Fuel purchase saved for ' . $selectedVehicle['vehicle_name'] . ' (' . $selectedVehicle['number_plate'] . ').'
+            'Fuel purchase saved for ' . $selectedVehicle['vehicle_name'] . ' (' . $selectedVehicle['number_plate'] . '). Remaining card balance: ' . fleet_currency($newCardBalance) . '.'
         );
         header('Location: record_fuel_purchase.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart));
         exit();
@@ -340,17 +363,17 @@ echo '<div class="form-group span-4"><label for="amount">Amount (ZMW)</label><in
 echo '<div class="form-group span-4"><label for="unit_price_preview">Unit Price</label><input id="unit_price_preview" type="text" value="K 0.00" readonly><div class="input-hint">Calculated automatically from amount divided by litres.</div></div>';
 echo '<div class="form-group span-6"><label for="receipt_attachment">Receipt Attachment</label><input id="receipt_attachment" type="file" name="receipt_attachment" accept=".jpg,.jpeg,.png,.pdf" required><div class="input-hint">Allowed: JPG, PNG, PDF. Max 5 MB.</div></div>';
 echo '<div class="form-group span-6"><label for="notes">Notes</label><textarea id="notes" name="notes" placeholder="Optional notes about the refill">' . fleet_h($_POST['notes'] ?? '') . '</textarea></div>';
-echo '<div class="form-group span-12"><div class="button-row"><button class="button" type="submit" ' . (!$cardAccounts ? 'disabled' : '') . '><i class="fas fa-save"></i>Save Fuel Purchase</button><a class="button-secondary" href="weekly_liquidation.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '"><i class="fas fa-clipboard-check"></i>Review Weekly Liquidation</a></div></div>';
+echo '<div class="form-group span-12"><div class="button-row"><button class="button" type="submit" ' . (!$cardAccounts ? 'disabled' : '') . '><i class="fas fa-save"></i>Save Fuel Purchase</button><a class="button-secondary" href="pending_reconciliations.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '"><i class="fas fa-clipboard-check"></i>Pending Reconciliations</a></div></div>';
 echo '</form>';
 echo '</section>';
 
 echo '<section class="panel">';
-echo '<div class="panel-header"><div><h2>Current Week Fuel Purchases</h2><p>Every saved purchase is attached to the weekly liquidation draft automatically.</p></div></div>';
+echo '<div class="panel-header"><div><h2>Current Fuel Purchases</h2><p>Every saved purchase stays pending until you include it in a reconciliation package and submit it for review.</p></div></div>';
 if (!$recentFuelPurchases) {
     echo '<div class="empty-state">';
     echo '<div class="empty-state-icon"><i class="fas fa-receipt"></i></div>';
     echo '<h3>No purchases recorded yet</h3>';
-    echo '<p>Once you save the first refill and attach its receipt, it will appear here and inside the weekly liquidation draft.</p>';
+    echo '<p>Once you save the first refill and attach its receipt, it will appear here and stay pending until you submit it inside a reconciliation package.</p>';
     echo '</div>';
 } else {
     echo '<div class="data-list">';

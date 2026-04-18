@@ -19,7 +19,7 @@ if (getCurrentRole() !== 'driver') {
 $logged_in_user_id = $_SESSION['user_id'];
 $logged_in_user_name = $_SESSION['user_name'];
 $logged_in_user_email = $_SESSION['user_email'];
-$logged_in_user_role = $_SESSION['user_role'];
+$logged_in_user_role = getCurrentRole();
 
 // Get facility information
 $is_super_admin = isSuperAdmin();
@@ -205,7 +205,7 @@ try {
     $assignedVehicles = $result->fetch_all(MYSQLI_ASSOC);
     
     // If no vehicles assigned, get all vehicles from user's facility (for admins)
-    if (empty($assignedVehicles) && ($logged_in_user_role === 'admin' || $logged_in_user_role === 'super_admin')) {
+    if (empty($assignedVehicles) && ($logged_in_user_role === 'provincial_admin' || $logged_in_user_role === 'fleet_manager')) {
         $all_vehicles_query = "
             SELECT 
                 id, 

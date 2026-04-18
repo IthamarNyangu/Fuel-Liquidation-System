@@ -381,7 +381,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
 
             $confirmer = $confirmedByUserId > 0 ? movement_find_confirmer($systemConfirmers, $confirmedByUserId) : null;
             if ($confirmedByUserId > 0 && !$confirmer) {
-                throw new RuntimeException('Select a valid admin or facility admin in Confirmed By.');
+                throw new RuntimeException('Select a valid Fleet Manager or Provincial Admin in Confirmed By.');
             }
             if (!$confirmer) {
                 throw new RuntimeException('Confirmed by is required before starting a leg.');
@@ -918,7 +918,7 @@ if ($inProgressLeg && $openLegBelongsToDriver) {
     echo '<div class="form-group span-4"><label for="time_in">Arrival Time</label><input id="time_in" type="time" name="time_in" value="' . fleet_h($completeFormValues['time_in']) . '" required></div>';
     echo '<div class="form-group span-4"><label for="odometer_end_km">End KM</label><input id="odometer_end_km" type="number" step="1" min="' . fleet_h(fleet_km_input_value(fleet_km_value($inProgressLeg['odometer_start_km']) + 1)) . '" name="odometer_end_km" placeholder="e.g. 12005" value="' . fleet_h($completeFormValues['odometer_end_km']) . '" data-start-km="' . fleet_h(fleet_km_input_value($inProgressLeg['odometer_start_km'])) . '" required></div>';
     echo '<div class="form-group span-4"><label for="total_km_preview">Total KM</label><input id="total_km_preview" type="text" value="0 km" readonly><div class="input-hint">Calculated when the leg is completed.</div></div>';
-    echo '<div class="form-group span-12"><div class="button-row"><button class="button" type="submit">Complete Leg</button><a class="button-secondary" href="weekly_liquidation.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode((string) $inProgressLeg['week_start_date']) . '">Review This Week</a></div></div>';
+    echo '<div class="form-group span-12"><div class="button-row"><button class="button" type="submit">Complete Leg</button><a class="button-secondary" href="pending_reconciliations.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode((string) $inProgressLeg['week_start_date']) . '">Pending Reconciliations</a></div></div>';
     echo '</form>';
     echo '</section>';
 } elseif (!$inProgressLeg) {
@@ -953,7 +953,7 @@ if ($inProgressLeg && $openLegBelongsToDriver) {
         $title = fleet_role_label((string) ($confirmer['role'] ?? 'staff'));
         echo '<option value="' . fleet_h($confirmer['id']) . '" data-name="' . fleet_h($confirmer['name']) . '" data-title="' . fleet_h($title) . '" data-contact="' . fleet_h($confirmer['email'] ?? '') . '"' . $selected . '>' . fleet_h($confirmer['name']) . ' &middot; ' . fleet_h($title) . '</option>';
     }
-    echo '</select><div class="input-hint">Choose the admin, super admin, or facility admin confirming this movement.</div></div>';
+    echo '</select><div class="input-hint">Choose the Fleet Manager or Provincial Admin confirming this movement.</div></div>';
     echo '<div id="passenger_group" class="form-group ' . ($startFormValues['purpose_choice'] === 'Other' ? 'span-6' : 'span-4') . '"><label for="passenger_name">Passenger / Requesting Officer</label><input id="passenger_name" list="passenger_name_suggestions" type="text" name="passenger_name" value="' . fleet_h($startFormValues['passenger_name']) . '" placeholder="Start typing a name" required><datalist id="passenger_name_suggestions">';
     $seenPassengerSuggestions = [];
     foreach ($systemUsers as $systemUser) {
@@ -969,7 +969,7 @@ if ($inProgressLeg && $openLegBelongsToDriver) {
         echo '<option value="' . fleet_h($suggestedName) . '" label="' . fleet_h(fleet_role_label((string) ($systemUser['role'] ?? 'staff'))) . '"></option>';
     }
     echo '</datalist><div class="input-hint">Start typing to see matching users. You can still enter a name manually.</div></div>';
-    echo '<div class="form-group span-12"><div class="button-row"><button class="button" type="submit">Start Leg</button><a class="button-secondary" href="weekly_liquidation.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '">Review This Week</a></div></div>';
+    echo '<div class="form-group span-12"><div class="button-row"><button class="button" type="submit">Start Leg</button><a class="button-secondary" href="pending_reconciliations.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '">Pending Reconciliations</a></div></div>';
     echo '</form>';
     echo '</section>';
 }
@@ -980,7 +980,7 @@ if (!$recentTrips) {
     echo '<div class="empty-state">';
     echo '<div class="empty-state-icon"><i class="fas fa-route"></i></div>';
     echo '<h3>No movement legs yet</h3>';
-    echo '<p>Start the first point-to-point movement for this week. Once saved, it will appear here and flow into the weekly liquidation draft automatically.</p>';
+    echo '<p>Start the first point-to-point movement for the current reconciliation window. Once saved, it will appear here as a pending item that can be included in the next reconciliation package.</p>';
     echo '</div>';
 } else {
     echo '<div class="data-list">';

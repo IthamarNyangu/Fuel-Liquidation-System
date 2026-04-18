@@ -6,9 +6,10 @@ ini_set('display_errors', 1);
 // Require admin authentication
 session_start();
 require_once 'db_connect.php';
+require_once 'facility_auth.php';
 
-// Check if user is logged in and is admin or super_admin
-if (!isset($_SESSION['user_id']) || !in_array($_SESSION['user_role'], ['admin', 'super_admin', 'facility_admin'])) {
+// Only Fleet Manager should manage province assignment directly.
+if (!isset($_SESSION['user_id']) || !isFleetManager()) {
     header("Location: login.php");
     exit();
 }

@@ -130,6 +130,10 @@ $cardAccountStmt->execute([
     $selectedVehicle['id'],
 ]);
 $cardAccount = $cardAccountStmt->fetch() ?: null;
+if (!$cardAccount && !empty($selectedVehicle['float_account_name'])) {
+    $cardAccount = fleet_ensure_vehicle_card_account($pdo, $selectedVehicle, $user['id']);
+}
+$cardContext = fleet_vehicle_card_context($selectedVehicle, $cardAccount);
 
 $recentTripSql = "
     SELECT
@@ -199,6 +203,22 @@ if (!$cardAccount) {
     ];
 }
 
+if ($cardContext['threshold_key'] === 'needs_top_up') {
+    $warnings[] = [
+        'class' => 'critical',
+        'title' => 'Card balance needs top-up',
+        'text' => 'Current balance is ' . fleet_currency($cardContext['balance']) . '. Suggested replenishment is ' . fleet_currency($cardContext['suggested_replenishment']) . ' against the normal allocation of ' . fleet_currency($cardContext['limit']) . '.',
+        'icon' => 'fa-gas-pump',
+    ];
+} elseif ($cardContext['threshold_key'] === 'refill_soon') {
+    $warnings[] = [
+        'class' => 'caution',
+        'title' => 'Card balance is nearing refill threshold',
+        'text' => 'Current balance is ' . fleet_currency($cardContext['balance']) . '. Suggested replenishment is ' . fleet_currency($cardContext['suggested_replenishment']) . ' when the authorised top-up is raised.',
+        'icon' => 'fa-gauge-high',
+    ];
+}
+
 if ($weekly && (int) ($weekly['missing_receipts'] ?? 0) > 0) {
     $warnings[] = [
         'class' => 'critical',
@@ -221,10 +241,10 @@ if (((int) $tripSummary['trip_count'] > 0 || (int) $fuelSummary['fuel_count'] > 
     && (!$weekly || in_array($weekly['status'], ['draft', 'returned'], true))) {
     $warnings[] = [
         'class' => 'caution',
-        'title' => $isDriverView ? 'This week is not submitted yet' : 'Liquidation package still open',
+        'title' => $isDriverView ? 'Reconciliation still open' : 'Reconciliation package still open',
         'text' => $isDriverView
-            ? 'You have activity recorded for this week, but the weekly liquidation is still open. Review it before the end of the week.'
-            : 'This vehicle has recorded activity for the selected week, but the liquidation package is still open or not yet submitted.',
+            ? 'You have recorded movement or fuel activity, but the reconciliation package is still open. Review and submit it when ready.'
+            : 'This vehicle has recorded activity for the selected period, but the reconciliation package is still open or not yet submitted.',
         'icon' => 'fa-clipboard-check',
     ];
 }
@@ -246,9 +266,8 @@ $vehicleQueryBase = 'vehicle_id=' . urlencode((string) $selectedVehicle['id']) .
 $weekStatus = $weekly['status'] ?? 'draft';
 $weekStatusLabel = $weekly ? ucwords(str_replace('_', ' ', $weekly['status'])) : ($isDriverView ? 'Draft' : 'In View');
 $fullWeekLabel = date('d F Y', strtotime($weekStart)) . ' to ' . date('d F Y', strtotime($weekEnd));
-$vehicleBalance = (float) ($selectedVehicle['float_balance'] ?? 0);
 $vehicleAccountName = trim((string) ($selectedVehicle['float_account_name'] ?? ''));
-$cardBalanceLabel = 'K ' . number_format($vehicleBalance, 2);
+$cardBalanceLabel = fleet_currency($cardContext['balance']);
 $cardBalanceNote = $cardAccount
     ? $cardAccount['account_name']
     : ($vehicleAccountName !== '' ? $vehicleAccountName : 'No active card');
@@ -298,7 +317,7 @@ echo '<div class="detail-pair"><span class="detail-pair-label">Week Window</span
 echo '</div>';
 echo '<div class="metric-grid driver-key-metrics" style="margin-top:14px;">';
 echo '<div class="metric-card metric-card-featured"><div class="metric-label">Current Odometer</div><div class="metric-value">' . fleet_format_km($latestOdometer, false) . '</div><div class="metric-caption">Kilometres</div></div>';
-echo '<div class="metric-card metric-card-featured"><div class="metric-label">Fuel/Card Balance</div><div class="metric-value">' . $cardBalanceLabel . '</div><div class="metric-caption">' . fleet_h($cardBalanceNote) . '</div></div>';
+echo '<div class="metric-card metric-card-featured"><div class="metric-label">Fuel/Card Balance</div><div class="metric-value">' . $cardBalanceLabel . '</div><div class="metric-caption">' . fleet_h($cardContext['threshold_label']) . ' · Suggested top-up ' . fleet_currency($cardContext['suggested_replenishment']) . '</div></div>';
 echo '</div>';
 echo '</div>';
 
@@ -322,10 +341,10 @@ if ($isDriverView) {
     echo '<div class="action-grid action-grid-compact" style="margin-top:10px;">';
     echo '<a class="button" href="log_movement_leg.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '">Log Movement</a>';
     echo '<a class="button-secondary" href="record_fuel_purchase.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '">Record Fuel</a>';
-    echo '<a class="button-secondary" href="weekly_liquidation.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '">Review Week</a>';
+    echo '<a class="button-secondary" href="pending_reconciliations.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '">Pending Reconciliations</a>';
     echo '</div>';
 } else {
-    echo '<p class="helper-text" style="margin-top:10px;">This view is read-only. Use the province liquidation queue to review submitted activity by province.</p>';
+    echo '<p class="helper-text" style="margin-top:10px;">This view is read-only. Use the reconciliation review queue to review submitted activity by province.</p>';
 }
 echo '</div>';
 echo '</section>';

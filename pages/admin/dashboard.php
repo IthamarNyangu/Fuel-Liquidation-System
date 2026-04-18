@@ -15,6 +15,12 @@ $user_facility_id = getUserProvinceId();
 $user_role = getCurrentRole();
 $user_name = isset($_SESSION['user_name']) ? $_SESSION['user_name'] : 'User';
 $user_email = isset($_SESSION['user_email']) ? $_SESSION['user_email'] : '';
+
+if ($user_role === 'driver') {
+    header('Location: my_vehicle.php');
+    exit();
+}
+
 $user_role_label = function_exists('getRoleDisplayName') ? getRoleDisplayName() : ucwords(str_replace('_', ' ', $user_role));
 if ($user_role === 'fleet_manager') {
     $user_role_label = 'Fleet Manager';
@@ -426,7 +432,7 @@ if ($viewMode === 'all' || $viewMode === 'logbook') {
     
     // Build staff-only filter for logbook (check driver_id)
     $logbook_staff_filter = "";
-    if ($user_role === 'staff') {
+    if ($user_role === 'driver') {
         $logbook_staff_filter = " AND u.id = :staff_user_id";
         $logbook_params[':staff_user_id'] = $_SESSION['user_id'];
     }
@@ -571,10 +577,10 @@ if ($is_super_admin) {
                 <?php endif; ?>
                 <?php if ($can_use_driver_workflow): ?>
                 <li><a href="weekly_report.php"><span class="menu-icon"><i class="fas fa-file-alt"></i></span><span class="menu-text">Weekly Report</span></a></li>
-                <li><a href="weekly_liquidation.php"><span class="menu-icon"><i class="fas fa-clipboard-check"></i></span><span class="menu-text">Vehicle Liquidation</span></a></li>
+                <li><a href="pending_reconciliations.php"><span class="menu-icon"><i class="fas fa-clipboard-check"></i></span><span class="menu-text">Pending Reconciliations</span></a></li>
                 <?php endif; ?>
                 <?php if ($can_review_weekly): ?>
-                <li><a href="province_liquidation.php"><span class="menu-icon"><i class="fas fa-user-check"></i></span><span class="menu-text">Province Liquidation</span></a></li>
+                <li><a href="province_liquidation.php"><span class="menu-icon"><i class="fas fa-user-check"></i></span><span class="menu-text">Reconciliation Review</span></a></li>
                 <?php endif; ?>
                 <?php if ($can_use_driver_workflow): ?>
                 <li><a href="logbook.php"><span class="menu-icon"><i class="fas fa-book"></i></span><span class="menu-text">Log Book</span></a></li>

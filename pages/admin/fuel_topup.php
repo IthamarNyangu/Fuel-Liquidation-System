@@ -6,6 +6,7 @@ $appRoot = dirname(__DIR__, 2);
 require_once $appRoot . '/auth_check.php';
 require_once $appRoot . '/facility_auth.php';
 require_once $appRoot . '/db_config.php';
+require_once $appRoot . '/fleet_redesign.php';
 
 function topup_h($value): string
 {
@@ -101,6 +102,7 @@ function topup_fetch_vehicles(PDO $pdo, bool $isSuperAdmin, ?int $facilityId): a
             v.vehicle_name,
             v.number_plate,
             COALESCE(v.float_balance, 0) AS float_balance,
+            COALESCE(v.float_limit, 0) AS float_limit,
             COALESCE(NULLIF(v.float_account_name, ''), 'Not assigned') AS float_account_name,
             COALESCE(v.fuel_type, '') AS fuel_type,
             COALESCE(f.facility_name, 'Unassigned Province') AS facility_name
@@ -186,6 +188,9 @@ $vehicleLookup = topup_build_vehicle_lookup($vehicles);
 $total_balance = array_sum(array_map(static function (array $vehicle): float {
     return (float) ($vehicle['float_balance'] ?? 0);
 }, $vehicles));
+$vehiclesNeedingTopUp = count(array_filter($vehicles, static function (array $vehicle): bool {
+    return fleet_vehicle_card_context($vehicle)['threshold_key'] === 'needs_top_up';
+}));
 $facility_display = topup_fetch_facility_display($pdo, $is_super_admin, $user_facility_id ? (int) $user_facility_id : null);
 
 $postedAdjustmentType = (string) ($_POST['adjustment_type'] ?? 'addition');
@@ -266,6 +271,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['adjust_fuel'])) {
                     $updateStmt = $pdo->prepare('UPDATE vehicles SET float_balance = ? WHERE id = ?');
                     $updateStmt->execute([$newBalance, (int) $vehicle_id]);
 
+                    $cardUpdateStmt = $pdo->prepare("
+                        UPDATE card_accounts
+                        SET current_balance = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE vehicle_id = ?
+                          AND status = 'active'
+                    ");
+                    $cardUpdateStmt->execute([$newBalance, (int) $vehicle_id]);
+
                     $insertStmt = $pdo->prepare("
                         INSERT INTO float_transactions
                         (float_account, transaction_type, amount, previous_balance, new_balance, reason, created_by, photo_data, photo_filename, photo_type)
@@ -295,6 +309,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['adjust_fuel'])) {
                     $total_balance = array_sum(array_map(static function (array $vehicle): float {
                         return (float) ($vehicle['float_balance'] ?? 0);
                     }, $vehicles));
+                    $vehiclesNeedingTopUp = count(array_filter($vehicles, static function (array $vehicle): bool {
+                        return fleet_vehicle_card_context($vehicle)['threshold_key'] === 'needs_top_up';
+                    }));
 
                     $formData['amount'] = '';
                     $formData['reason_type'] = 'monthly_allocation';
@@ -390,6 +407,7 @@ $adjustmentHistory = $historyStmt->fetchAll(PDO::FETCH_ASSOC);
 $selectedVehicle = $formData['vehicle_id'] !== '' && isset($vehicleLookup[$formData['vehicle_id']])
     ? $vehicleLookup[$formData['vehicle_id']]
     : null;
+$selectedVehicleCardContext = $selectedVehicle ? fleet_vehicle_card_context($selectedVehicle) : null;
 $historyFromItem = $historyTotalItems > 0 ? ($historyOffset + 1) : 0;
 $historyToItem = $historyTotalItems > 0 ? min($historyOffset + count($adjustmentHistory), $historyTotalItems) : 0;
 $historyPageStart = max(1, $historyPage - 2);
@@ -434,6 +452,10 @@ if (($historyPageEnd - $historyPageStart) < 4) {
                 <span class="vft-summary-label">Total Combined Float Balance</span>
                 <strong class="vft-summary-value vft-summary-value-balance"><?php echo topup_h(topup_currency((float) $total_balance)); ?></strong>
             </article>
+            <article class="vft-summary-card">
+                <span class="vft-summary-label">Needs Top-Up</span>
+                <strong class="vft-summary-value"><?php echo topup_h((string) $vehiclesNeedingTopUp); ?></strong>
+            </article>
         </section>
 
         <section class="vft-panel">
@@ -454,13 +476,17 @@ if (($historyPageEnd - $historyPageStart) < 4) {
                                     <option value="">Select vehicle</option>
                                     <?php foreach ($vehicles as $vehicle): ?>
                                         <?php $vehicleId = (string) $vehicle['id']; ?>
+                                        <?php $cardContext = fleet_vehicle_card_context($vehicle); ?>
                                         <option
                                             value="<?php echo topup_h($vehicleId); ?>"
                                             data-vehicle="<?php echo topup_h(topup_vehicle_display($vehicle)); ?>"
                                             data-facility="<?php echo topup_h($vehicle['facility_name']); ?>"
                                             data-fuel-type="<?php echo topup_h(topup_fuel_type_label($vehicle['fuel_type'] ?? '')); ?>"
                                             data-balance="<?php echo topup_h(number_format((float) $vehicle['float_balance'], 2, '.', '')); ?>"
+                                            data-limit="<?php echo topup_h(number_format((float) $vehicle['float_limit'], 2, '.', '')); ?>"
                                             data-account="<?php echo topup_h($vehicle['float_account_name']); ?>"
+                                            data-threshold="<?php echo topup_h($cardContext['threshold_label']); ?>"
+                                            data-suggested="<?php echo topup_h(number_format((float) $cardContext['suggested_replenishment'], 2, '.', '')); ?>"
                                             <?php echo $formData['vehicle_id'] === $vehicleId ? 'selected' : ''; ?>
                                         >
                                             <?php echo topup_h(topup_vehicle_display($vehicle)); ?>
@@ -528,11 +554,23 @@ if (($historyPageEnd - $historyPageStart) < 4) {
                             </article>
                             <article class="vft-context-item">
                                 <span class="vft-context-label">Current Balance</span>
-                                <strong id="contextBalance"><?php echo $selectedVehicle ? topup_h(topup_currency((float) $selectedVehicle['float_balance'])) : '--'; ?></strong>
+                                <strong id="contextBalance"><?php echo $selectedVehicleCardContext ? topup_h(topup_currency((float) $selectedVehicleCardContext['balance'])) : '--'; ?></strong>
                             </article>
                             <article class="vft-context-item">
                                 <span class="vft-context-label">Card Account</span>
                                 <strong id="contextAccount"><?php echo $selectedVehicle ? topup_h($selectedVehicle['float_account_name']) : '--'; ?></strong>
+                            </article>
+                            <article class="vft-context-item">
+                                <span class="vft-context-label">Normal Allocation</span>
+                                <strong id="contextLimit"><?php echo $selectedVehicleCardContext ? topup_h(topup_currency((float) $selectedVehicleCardContext['limit'])) : '--'; ?></strong>
+                            </article>
+                            <article class="vft-context-item">
+                                <span class="vft-context-label">Threshold Status</span>
+                                <strong id="contextThreshold"><?php echo $selectedVehicleCardContext ? topup_h($selectedVehicleCardContext['threshold_label']) : '--'; ?></strong>
+                            </article>
+                            <article class="vft-context-item">
+                                <span class="vft-context-label">Suggested Refill</span>
+                                <strong id="contextSuggested"><?php echo $selectedVehicleCardContext ? topup_h(topup_currency((float) $selectedVehicleCardContext['suggested_replenishment'])) : '--'; ?></strong>
                             </article>
                         </div>
 
@@ -771,6 +809,9 @@ if (($historyPageEnd - $historyPageStart) < 4) {
             document.getElementById('contextFuelType').textContent = option.dataset.fuelType || '--';
             document.getElementById('contextBalance').textContent = formatCurrency(option.dataset.balance || 0);
             document.getElementById('contextAccount').textContent = option.dataset.account || '--';
+            document.getElementById('contextLimit').textContent = formatCurrency(option.dataset.limit || 0);
+            document.getElementById('contextThreshold').textContent = option.dataset.threshold || '--';
+            document.getElementById('contextSuggested').textContent = formatCurrency(option.dataset.suggested || 0);
         }
 
         function updateSubmitButton() {

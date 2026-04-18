@@ -30,6 +30,11 @@ function fleet_h($value): string
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
+function fleet_currency($value): string
+{
+    return 'K ' . number_format((float) $value, 2);
+}
+
 function fleet_km_value($value): int
 {
     if ($value === null || $value === '') {
@@ -60,9 +65,199 @@ function fleet_is_valid_km_input($value): bool
     return preg_match('/^\d+$/', trim((string) $value)) === 1;
 }
 
+function fleet_card_limit_value(?array $vehicle = null, ?array $cardAccount = null): float
+{
+    if ($cardAccount && isset($cardAccount['card_limit']) && (float) $cardAccount['card_limit'] > 0) {
+        return round((float) $cardAccount['card_limit'], 2);
+    }
+
+    if ($vehicle && isset($vehicle['float_limit'])) {
+        return round((float) $vehicle['float_limit'], 2);
+    }
+
+    return 0.0;
+}
+
+function fleet_card_balance_value(?array $vehicle = null, ?array $cardAccount = null): float
+{
+    if ($vehicle && isset($vehicle['float_balance'])) {
+        return round((float) $vehicle['float_balance'], 2);
+    }
+
+    if ($cardAccount && isset($cardAccount['current_balance'])) {
+        return round((float) $cardAccount['current_balance'], 2);
+    }
+
+    return 0.0;
+}
+
+function fleet_card_remaining_percent(float $balance, float $limit): float
+{
+    if ($limit <= 0) {
+        return 0.0;
+    }
+
+    return round(($balance / $limit) * 100, 2);
+}
+
+function fleet_card_threshold_key(float $balance, float $limit): string
+{
+    if ($limit <= 0) {
+        return 'healthy';
+    }
+
+    $remainingPercent = fleet_card_remaining_percent($balance, $limit);
+
+    if ($remainingPercent < 45) {
+        return 'needs_top_up';
+    }
+
+    if ($remainingPercent <= 55) {
+        return 'refill_soon';
+    }
+
+    return 'healthy';
+}
+
+function fleet_card_threshold_label(string $thresholdKey): string
+{
+    return match ($thresholdKey) {
+        'needs_top_up' => 'Needs Top-Up',
+        'refill_soon' => 'Refill Soon',
+        default => 'Healthy',
+    };
+}
+
+function fleet_card_threshold_class(string $thresholdKey): string
+{
+    return match ($thresholdKey) {
+        'needs_top_up' => 'is-warning',
+        'refill_soon' => 'is-pending',
+        default => 'is-positive',
+    };
+}
+
+function fleet_suggested_replenishment(float $balance, float $limit): float
+{
+    if ($limit <= 0) {
+        return 0.0;
+    }
+
+    return round(max(0, $limit - $balance), 2);
+}
+
+function fleet_vehicle_card_context(array $vehicle, ?array $cardAccount = null): array
+{
+    $balance = fleet_card_balance_value($vehicle, $cardAccount);
+    $limit = fleet_card_limit_value($vehicle, $cardAccount);
+    $thresholdKey = fleet_card_threshold_key($balance, $limit);
+    $remainingPercent = fleet_card_remaining_percent($balance, $limit);
+
+    return [
+        'balance' => $balance,
+        'limit' => $limit,
+        'remaining_percent' => $remainingPercent,
+        'threshold_key' => $thresholdKey,
+        'threshold_label' => fleet_card_threshold_label($thresholdKey),
+        'threshold_class' => fleet_card_threshold_class($thresholdKey),
+        'suggested_replenishment' => fleet_suggested_replenishment($balance, $limit),
+    ];
+}
+
+function fleet_ensure_vehicle_card_account(PDO $pdo, array $vehicle, ?int $createdBy = null): ?array
+{
+    $vehicleId = (int) ($vehicle['id'] ?? 0);
+    if ($vehicleId <= 0) {
+        return null;
+    }
+
+    $lookupStmt = $pdo->prepare("
+        SELECT *
+        FROM card_accounts
+        WHERE vehicle_id = ?
+        ORDER BY
+            CASE status
+                WHEN 'active' THEN 0
+                WHEN 'inactive' THEN 1
+                ELSE 2
+            END,
+            id
+        LIMIT 1
+    ");
+    $lookupStmt->execute([$vehicleId]);
+    $existing = $lookupStmt->fetch() ?: null;
+
+    $accountName = trim((string) ($vehicle['float_account_name'] ?? ''));
+    if ($accountName === '') {
+        $vehicleName = trim((string) ($vehicle['vehicle_name'] ?? 'Vehicle'));
+        $plateNumber = trim((string) ($vehicle['number_plate'] ?? ''));
+        $accountName = $plateNumber !== '' ? $vehicleName . ' (' . $plateNumber . ')' : $vehicleName;
+    }
+
+    $accountCode = 'vehicle-' . $vehicleId;
+    $fuelType = !empty($vehicle['fuel_type']) ? strtolower((string) $vehicle['fuel_type']) : null;
+    $facilityId = isset($vehicle['facility_id']) && $vehicle['facility_id'] !== '' ? (int) $vehicle['facility_id'] : null;
+    $balance = round((float) ($vehicle['float_balance'] ?? 0), 2);
+
+    if ($existing) {
+        $updateStmt = $pdo->prepare("
+            UPDATE card_accounts
+            SET facility_id = ?,
+                account_code = ?,
+                account_name = ?,
+                provider = 'TOM',
+                fuel_type = ?,
+                current_balance = ?,
+                legacy_float_account_name = ?,
+                status = CASE WHEN status = 'blocked' THEN status ELSE 'active' END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ");
+        $updateStmt->execute([
+            $facilityId,
+            $accountCode,
+            $accountName,
+            $fuelType,
+            $balance,
+            $accountName,
+            (int) $existing['id'],
+        ]);
+    } else {
+        $insertStmt = $pdo->prepare("
+            INSERT INTO card_accounts (
+                facility_id,
+                vehicle_id,
+                account_code,
+                account_name,
+                provider,
+                fuel_type,
+                opening_balance,
+                current_balance,
+                legacy_float_account_name,
+                status,
+                created_by
+            ) VALUES (?, ?, ?, ?, 'TOM', ?, ?, ?, ?, 'active', ?)
+        ");
+        $insertStmt->execute([
+            $facilityId,
+            $vehicleId,
+            $accountCode,
+            $accountName,
+            $fuelType,
+            $balance,
+            $balance,
+            $accountName,
+            $createdBy,
+        ]);
+    }
+
+    $lookupStmt->execute([$vehicleId]);
+    return $lookupStmt->fetch() ?: null;
+}
+
 function fleet_current_user_context(): array
 {
-    $role = normalizeRole($_SESSION['user_role'] ?? 'staff');
+    $role = normalizeRole($_SESSION['user_role'] ?? 'driver');
 
     return [
         'id' => (int) ($_SESSION['user_id'] ?? 0),
@@ -135,7 +330,7 @@ function fleet_require_reviewer_access(array $user): void
         return;
     }
 
-    $_SESSION['error_message'] = 'You do not have access to weekly liquidation review.';
+    $_SESSION['error_message'] = 'You do not have access to reconciliation review.';
     header('Location: dashboard.php');
     exit();
 }
@@ -224,6 +419,7 @@ function fleet_get_accessible_vehicles(PDO $pdo, array $user): array
             v.make,
             v.model,
             v.float_balance,
+            COALESCE(v.float_limit, 0) AS float_limit,
             v.float_account_name,
             v.current_mileage,
             v.opening_odometer_km,
@@ -390,6 +586,103 @@ function fleet_attach_item_to_weekly(PDO $pdo, int $weeklyId, string $itemType, 
     }
 
     $stmt->execute([$weeklyId, $recordId, $recordId]);
+}
+
+function fleet_fetch_pending_trip_legs(PDO $pdo, int $driverId, int $vehicleId, string $weekStart): array
+{
+    $stmt = $pdo->prepare("
+        SELECT
+            tl.*,
+            u.name AS driver_name
+        FROM trip_legs tl
+        LEFT JOIN users u
+            ON u.id = tl.driver_id
+        WHERE tl.driver_id = ?
+          AND tl.vehicle_id = ?
+          AND tl.week_start_date = ?
+          AND tl.record_status <> 'voided'
+        ORDER BY
+            CASE WHEN tl.record_status = 'in_progress' THEN 0 ELSE 1 END,
+            tl.movement_date DESC,
+            tl.time_out DESC,
+            tl.id DESC
+    ");
+    $stmt->execute([$driverId, $vehicleId, $weekStart]);
+
+    return $stmt->fetchAll();
+}
+
+function fleet_fetch_pending_fuel_purchases(PDO $pdo, int $driverId, int $vehicleId, string $weekStart): array
+{
+    $stmt = $pdo->prepare("
+        SELECT
+            fp.*,
+            ca.account_name,
+            a.id AS receipt_attachment_id
+        FROM fuel_purchases fp
+        LEFT JOIN card_accounts ca
+            ON ca.id = fp.card_account_id
+        LEFT JOIN attachments a
+            ON a.fuel_purchase_id = fp.id
+           AND a.attachment_type = 'receipt'
+        WHERE fp.driver_id = ?
+          AND fp.vehicle_id = ?
+          AND fp.week_start_date = ?
+          AND fp.record_status <> 'voided'
+        ORDER BY fp.purchase_date DESC, fp.id DESC
+    ");
+    $stmt->execute([$driverId, $vehicleId, $weekStart]);
+
+    return $stmt->fetchAll();
+}
+
+function fleet_fetch_weekly_item_selection(PDO $pdo, int $weeklyId): array
+{
+    $tripStmt = $pdo->prepare("
+        SELECT trip_leg_id
+        FROM weekly_liquidation_items
+        WHERE weekly_liquidation_id = ?
+          AND item_type = 'trip_leg'
+          AND trip_leg_id IS NOT NULL
+    ");
+    $tripStmt->execute([$weeklyId]);
+    $tripIds = array_map('intval', $tripStmt->fetchAll(PDO::FETCH_COLUMN));
+
+    $fuelStmt = $pdo->prepare("
+        SELECT fuel_purchase_id
+        FROM weekly_liquidation_items
+        WHERE weekly_liquidation_id = ?
+          AND item_type = 'fuel_purchase'
+          AND fuel_purchase_id IS NOT NULL
+    ");
+    $fuelStmt->execute([$weeklyId]);
+    $fuelIds = array_map('intval', $fuelStmt->fetchAll(PDO::FETCH_COLUMN));
+
+    return [
+        'trip_leg_ids' => $tripIds,
+        'fuel_purchase_ids' => $fuelIds,
+    ];
+}
+
+function fleet_replace_weekly_item_selection(PDO $pdo, int $weeklyId, array $tripLegIds, array $fuelPurchaseIds): void
+{
+    $tripLegIds = array_values(array_unique(array_map('intval', $tripLegIds)));
+    $fuelPurchaseIds = array_values(array_unique(array_map('intval', $fuelPurchaseIds)));
+
+    $deleteStmt = $pdo->prepare("DELETE FROM weekly_liquidation_items WHERE weekly_liquidation_id = ?");
+    $deleteStmt->execute([$weeklyId]);
+
+    foreach ($tripLegIds as $tripLegId) {
+        if ($tripLegId > 0) {
+            fleet_attach_item_to_weekly($pdo, $weeklyId, 'trip_leg', $tripLegId);
+        }
+    }
+
+    foreach ($fuelPurchaseIds as $fuelPurchaseId) {
+        if ($fuelPurchaseId > 0) {
+            fleet_attach_item_to_weekly($pdo, $weeklyId, 'fuel_purchase', $fuelPurchaseId);
+        }
+    }
 }
 
 function fleet_get_latest_vehicle_odometer(PDO $pdo, int $vehicleId): int
@@ -682,9 +975,10 @@ function fleet_render_shell_start(string $title, string $activeNav, array $user,
     if (fleet_is_driver($user)) {
         $navItems = [
             ['key' => 'my_vehicle', 'href' => 'my_vehicle.php', 'icon' => 'fa-car-side', 'label' => 'My Vehicle'],
+            ['key' => 'reports', 'href' => 'reports.php', 'icon' => 'fa-chart-line', 'label' => 'Reports'],
             ['key' => 'movement_leg', 'href' => 'log_movement_leg.php', 'icon' => 'fa-route', 'label' => 'Log Movement'],
             ['key' => 'fuel_purchase', 'href' => 'record_fuel_purchase.php', 'icon' => 'fa-receipt', 'label' => 'Record Fuel Purchase'],
-            ['key' => 'weekly_liquidation', 'href' => 'weekly_liquidation.php', 'icon' => 'fa-clipboard-check', 'label' => 'Vehicle Liquidation'],
+            ['key' => 'pending_reconciliations', 'href' => 'pending_reconciliations.php', 'icon' => 'fa-clipboard-check', 'label' => 'Pending Reconciliations'],
         ];
     } else {
         $brandTitle = $user['role'] === 'fleet_manager' ? 'Fleet Hub' : 'Province Hub';
@@ -697,7 +991,7 @@ function fleet_render_shell_start(string $title, string $activeNav, array $user,
             'key' => 'province_liquidation',
             'href' => 'province_liquidation.php',
             'icon' => 'fa-user-check',
-            'label' => 'Province Liquidation',
+            'label' => 'Reconciliation Review',
         ];
     }
 
@@ -741,7 +1035,9 @@ function fleet_render_shell_start(string $title, string $activeNav, array $user,
     }
     echo '</nav>';
     echo '<div class="workflow-sidebar-footer">';
-    echo '<a class="workflow-nav-link subtle" href="dashboard.php" title="Back to Dashboard"><i class="fas fa-arrow-left"></i><span>Back to Dashboard</span></a>';
+    if (!fleet_is_driver($user)) {
+        echo '<a class="workflow-nav-link subtle" href="dashboard.php" title="Back to Dashboard"><i class="fas fa-arrow-left"></i><span>Back to Dashboard</span></a>';
+    }
     echo '<a class="workflow-nav-link subtle" href="logout.php" title="Logout"><i class="fas fa-sign-out-alt"></i><span>Logout</span></a>';
     echo '</div>';
     echo '</aside>';

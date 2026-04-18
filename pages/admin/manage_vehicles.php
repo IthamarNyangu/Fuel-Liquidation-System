@@ -5,6 +5,7 @@ $appRoot = dirname(__DIR__, 2);
 require_once $appRoot . '/admin_auth.php';
 require_once $appRoot . '/db_connect.php';
 require_once $appRoot . '/facility_auth.php';
+require_once $appRoot . '/fleet_redesign.php';
 
 // Get facility information
 $is_super_admin = isFleetManager();
@@ -32,6 +33,100 @@ if (isset($_SESSION['error_message'])) {
         $messageType = 'error';
     }
     unset($_SESSION['error_message']);
+}
+
+function vehicle_sync_card_account(mysqli $conn, int $vehicleId, ?int $facilityId, string $accountName, string $fuelType, float $openingBalance, float $currentBalance, bool $preserveExistingBalances = false): void
+{
+    $accountCode = 'vehicle-' . $vehicleId;
+    $legacyAccountName = $accountName;
+    $provider = 'TOM';
+    $status = 'active';
+    $createdBy = isset($_SESSION['user_id']) ? (int) $_SESSION['user_id'] : null;
+    $normalizedFuelType = in_array($fuelType, ['petrol', 'diesel'], true) ? $fuelType : null;
+
+    $existingStmt = $conn->prepare('SELECT id, opening_balance, current_balance FROM card_accounts WHERE vehicle_id = ? LIMIT 1');
+    if (!$existingStmt) {
+        throw new Exception('Could not prepare the card account lookup.');
+    }
+    $existingStmt->bind_param('i', $vehicleId);
+    $existingStmt->execute();
+    $existingResult = $existingStmt->get_result();
+    $existingCard = $existingResult ? $existingResult->fetch_assoc() : null;
+    $existingStmt->close();
+
+    if ($existingCard) {
+        $cardId = (int) $existingCard['id'];
+        $openingValue = $preserveExistingBalances ? (float) $existingCard['opening_balance'] : $openingBalance;
+        $currentValue = $preserveExistingBalances ? (float) $existingCard['current_balance'] : $currentBalance;
+        $updateStmt = $conn->prepare("
+            UPDATE card_accounts
+            SET facility_id = ?,
+                account_code = ?,
+                account_name = ?,
+                provider = ?,
+                fuel_type = ?,
+                opening_balance = ?,
+                current_balance = ?,
+                legacy_float_account_name = ?,
+                status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ");
+        if (!$updateStmt) {
+            throw new Exception('Could not prepare the card account update.');
+        }
+        $updateStmt->bind_param(
+            'issssddssi',
+            $facilityId,
+            $accountCode,
+            $accountName,
+            $provider,
+            $normalizedFuelType,
+            $openingValue,
+            $currentValue,
+            $legacyAccountName,
+            $status,
+            $cardId
+        );
+        $updateStmt->execute();
+        $updateStmt->close();
+        return;
+    }
+
+    $insertStmt = $conn->prepare("
+        INSERT INTO card_accounts (
+            facility_id,
+            vehicle_id,
+            account_code,
+            account_name,
+            provider,
+            fuel_type,
+            opening_balance,
+            current_balance,
+            legacy_float_account_name,
+            status,
+            created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+    if (!$insertStmt) {
+        throw new Exception('Could not prepare the card account insert.');
+    }
+    $insertStmt->bind_param(
+        'iissssddssi',
+        $facilityId,
+        $vehicleId,
+        $accountCode,
+        $accountName,
+        $provider,
+        $normalizedFuelType,
+        $openingBalance,
+        $currentBalance,
+        $legacyAccountName,
+        $status,
+        $createdBy
+    );
+    $insertStmt->execute();
+    $insertStmt->close();
 }
 
 // Handle form submissions
@@ -91,6 +186,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Auto-generate float account name
                 $floatAccountName = $vehicleName . ' (' . $numberPlate . ')';
                 
+                $conn->begin_transaction();
+
                 $stmt = $conn->prepare("
                     INSERT INTO vehicles 
                     (vehicle_name, number_plate, asset_type, fuel_type, float_account_name, float_balance, float_limit, current_mileage, facility_id) 
@@ -98,6 +195,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ");
                 $stmt->bind_param("sssssdddi", $vehicleName, $numberPlate, $assetType, $fuelType, $floatAccountName, $initialBalance, $floatLimit, $initialMileage, $facility_id);
                 $stmt->execute();
+                $vehicleId = (int) $conn->insert_id;
+                $stmt->close();
+
+                vehicle_sync_card_account(
+                    $conn,
+                    $vehicleId,
+                    $facility_id ? (int) $facility_id : null,
+                    $floatAccountName,
+                    $fuelType,
+                    $initialBalance,
+                    $initialBalance,
+                    false
+                );
+
+                $conn->commit();
                 
                 $_SESSION['success_message'] = 'Vehicle added successfully with card account!';
                 header("Location: manage_vehicles.php");
@@ -130,6 +242,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Update card account name
                 $floatAccountName = $vehicleName . ' (' . $numberPlate . ')';
                 
+                $currentVehicleStmt = $conn->prepare("
+                    SELECT facility_id, float_balance
+                    FROM vehicles
+                    WHERE id = ?
+                    LIMIT 1
+                ");
+                $currentVehicleStmt->bind_param("i", $id);
+                $currentVehicleStmt->execute();
+                $currentVehicleResult = $currentVehicleStmt->get_result();
+                $currentVehicle = $currentVehicleResult ? $currentVehicleResult->fetch_assoc() : null;
+                $currentVehicleStmt->close();
+
+                if (!$currentVehicle) {
+                    throw new Exception('Vehicle could not be found for editing.');
+                }
+
+                $facility_id = isset($currentVehicle['facility_id']) ? (int) $currentVehicle['facility_id'] : null;
+                $currentBalance = isset($currentVehicle['float_balance']) ? (float) $currentVehicle['float_balance'] : 0.0;
+
+                $conn->begin_transaction();
+
                 $stmt = $conn->prepare("
                     UPDATE vehicles 
                     SET vehicle_name = ?, number_plate = ?, asset_type = ?, fuel_type = NULLIF(?, ''), float_account_name = ?, float_limit = ?
@@ -137,6 +270,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ");
                 $stmt->bind_param("sssssdi", $vehicleName, $numberPlate, $assetType, $fuelType, $floatAccountName, $floatLimit, $id);
                 $stmt->execute();
+                $stmt->close();
+
+                vehicle_sync_card_account(
+                    $conn,
+                    $id,
+                    $facility_id,
+                    $floatAccountName,
+                    $fuelType,
+                    $currentBalance,
+                    $currentBalance,
+                    true
+                );
+
+                $conn->commit();
                 
                 $_SESSION['success_message'] = 'Vehicle updated successfully!';
                 header("Location: manage_vehicles.php");
@@ -171,6 +318,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit();
             }
         } catch (Exception $e) {
+            if ($conn->errno || $conn->more_results()) {
+                // no-op; keep mysqli state stable
+            }
+            try {
+                $conn->rollback();
+            } catch (Throwable $rollbackError) {
+            }
             $_SESSION['error_message'] = $e->getMessage();
             header("Location: manage_vehicles.php");
             exit();
@@ -266,6 +420,13 @@ if (!empty($params)) {
 $stmt->execute();
 $result = $stmt->get_result();
 $vehicles = $result->fetch_all(MYSQLI_ASSOC);
+foreach ($vehicles as &$vehicle) {
+    $cardContext = fleet_vehicle_card_context($vehicle);
+    $vehicle['card_threshold_label'] = $cardContext['threshold_label'];
+    $vehicle['card_threshold_class'] = $cardContext['threshold_class'];
+    $vehicle['suggested_replenishment'] = $cardContext['suggested_replenishment'];
+}
+unset($vehicle);
 
 $totalVehicles = count($vehicles);
 $assignedVehicles = 0;
@@ -1311,6 +1472,7 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
                                     $facilityName = $vehicle['facility_name'] ?: ($is_super_admin ? 'No Province' : $facility_display);
                                     $driverName = $vehicle['driver_name'] ?: 'Unassigned';
                                     $assetTypeLabel = ucfirst((string) ($vehicle['asset_type'] ?: 'car'));
+                                    $cardContext = fleet_vehicle_card_context($vehicle);
                                     $rowStatusLabel = empty($vehicle['fuel_type'])
                                         ? 'Needs Fuel Type'
                                         : (!empty($vehicle['driver_name']) ? 'Assigned' : 'Unassigned');
@@ -1340,7 +1502,14 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
                                             </span>
                                         </td>
                                         <td class="is-numeric"><?php echo number_format((int) round((float) $vehicle['current_mileage'])); ?> km</td>
-                                        <td class="is-numeric">K <?php echo number_format((float) $vehicle['float_balance'], 2); ?></td>
+                                        <td class="is-numeric">
+                                            K <?php echo number_format((float) $vehicle['float_balance'], 2); ?>
+                                            <div style="margin-top:8px;">
+                                                <span class="vm-status-chip <?php echo htmlspecialchars($cardContext['threshold_class']); ?>">
+                                                    <?php echo htmlspecialchars($cardContext['threshold_label']); ?>
+                                                </span>
+                                            </div>
+                                        </td>
                                         <td><span class="vm-status-chip <?php echo $rowStatusClass; ?>"><?php echo htmlspecialchars($rowStatusLabel); ?></span></td>
                                         <td class="is-actions">
                                             <details class="vm-row-menu">
@@ -1528,6 +1697,14 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
                         <div class="vm-readonly-item">
                             <span class="vm-readonly-label">Card Limit</span>
                             <span class="vm-readonly-value" id="viewLimit">K 0.00</span>
+                        </div>
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Threshold Status</span>
+                            <span class="vm-readonly-value" id="viewThreshold">Healthy</span>
+                        </div>
+                        <div class="vm-readonly-item">
+                            <span class="vm-readonly-label">Suggested Top-Up</span>
+                            <span class="vm-readonly-value" id="viewSuggestedTopup">K 0.00</span>
                         </div>
                     </div>
                 </section>
@@ -1836,6 +2013,8 @@ $assignments = $assignmentsResult ? $assignmentsResult->fetch_all(MYSQLI_ASSOC) 
             document.getElementById('viewBalance').textContent = formatCurrency(vehicle.float_balance);
             document.getElementById('viewBalanceDetail').textContent = formatCurrency(vehicle.float_balance);
             document.getElementById('viewLimit').textContent = formatWholeCurrency(vehicle.float_limit);
+            document.getElementById('viewThreshold').textContent = vehicle.card_threshold_label || 'Healthy';
+            document.getElementById('viewSuggestedTopup').textContent = formatCurrency(vehicle.suggested_replenishment || 0);
             document.getElementById('viewFloatAccount').textContent = vehicle.float_account_name || '-';
             document.getElementById('viewDateAdded').textContent = createdDateLabel;
             

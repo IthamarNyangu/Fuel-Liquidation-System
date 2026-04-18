@@ -7,9 +7,24 @@ if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
 
+function legacyRoleFromSession(): string
+{
+    return strtolower(trim((string) ($_SESSION['user_role'] ?? 'driver')));
+}
+
 function normalizeRole(?string $role = null): string
 {
-    $role = strtolower(trim((string) ($role ?? ($_SESSION['user_role'] ?? 'driver'))));
+    $role = strtolower(trim((string) ($role ?? legacyRoleFromSession())));
+    $sessionIsSuper = !empty($_SESSION['is_super_admin']);
+    $sessionIsFacilityAdmin = !empty($_SESSION['is_facility_admin']);
+
+    if ($role === '' && $sessionIsSuper) {
+        return 'fleet_manager';
+    }
+
+    if ($role === '' && $sessionIsFacilityAdmin) {
+        return 'provincial_admin';
+    }
 
     switch ($role) {
         case 'fleet_manager':
@@ -24,6 +39,14 @@ function normalizeRole(?string $role = null): string
         case 'staff':
             return 'driver';
         default:
+            if ($sessionIsSuper) {
+                return 'fleet_manager';
+            }
+
+            if ($sessionIsFacilityAdmin) {
+                return 'provincial_admin';
+            }
+
             return 'driver';
     }
 }
@@ -170,6 +193,16 @@ function canManageFuelPrices() {
     return isFleetManager();
 }
 
+function canCreateAccounts(): bool
+{
+    return isFleetManager();
+}
+
+function canReviewReconciliations(): bool
+{
+    return isFleetManager() || isProvincialAdmin();
+}
+
 function provinceLabelSingular(): string
 {
     return 'Province';
@@ -184,4 +217,3 @@ function scopeAllProvincesLabel(): string
 {
     return 'All Provinces';
 }
-

@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../../db_connect.php';
+require_once __DIR__ . '/../../facility_auth.php';
 
 // Check if user is logged in and has permission
 if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
@@ -8,7 +9,7 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     exit();
 }
 
-if ($_SESSION['user_role'] !== 'admin' && $_SESSION['user_role'] !== 'approver') {
+if (!canManageFuelPrices()) {
     $_SESSION['error_message'] = "You don't have permission to perform this action";
     header("Location: settings.php");
     exit();
