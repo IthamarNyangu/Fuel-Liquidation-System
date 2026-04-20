@@ -326,7 +326,7 @@ if (!$availableTripLegs) {
 echo '</section>';
 
 echo '<section class="panel">';
-echo '<div class="panel-header"><div><h2>Pending Fuel Purchases</h2><p>Fuel purchases are the trigger for reconciliation. Select the receipts you are ready to submit in this package.</p></div></div>';
+echo '<div class="panel-header"><div><h2>Pending Fuel Purchases</h2><p>Fuel purchases are the trigger for reconciliation. Select the refills whose receipt and pump photo are ready to submit in this package.</p></div></div>';
 if (!$availableFuelPurchases) {
     echo '<div class="empty-state">';
     echo '<div class="empty-state-icon"><i class="fas fa-receipt"></i></div>';
@@ -357,6 +357,9 @@ if (!$availableFuelPurchases) {
             echo '<a class="button-ghost" href="view_attachment.php?id=' . urlencode((string) $purchase['receipt_attachment_id']) . '" target="_blank"><i class="fas fa-paperclip"></i>View Receipt</a>';
         } else {
             echo '<span class="helper-text issue-hint"><i class="fas fa-triangle-exclamation"></i> Receipt missing</span>';
+        }
+        if (!empty($purchase['pump_photo_attachment_id'])) {
+            echo '<a class="button-ghost" href="view_attachment.php?id=' . urlencode((string) $purchase['pump_photo_attachment_id']) . '" target="_blank"><i class="fas fa-camera"></i>View Pump Photo</a>';
         }
         echo '</div>';
         if (!empty($purchase['issue_notes'])) {

@@ -618,13 +618,21 @@ function fleet_fetch_pending_fuel_purchases(PDO $pdo, int $driverId, int $vehicl
         SELECT
             fp.*,
             ca.account_name,
-            a.id AS receipt_attachment_id
+            (
+                SELECT MAX(id)
+                FROM attachments
+                WHERE fuel_purchase_id = fp.id
+                  AND attachment_type = 'receipt'
+            ) AS receipt_attachment_id,
+            (
+                SELECT MAX(id)
+                FROM attachments
+                WHERE fuel_purchase_id = fp.id
+                  AND attachment_type = 'supporting_doc'
+            ) AS pump_photo_attachment_id
         FROM fuel_purchases fp
         LEFT JOIN card_accounts ca
             ON ca.id = fp.card_account_id
-        LEFT JOIN attachments a
-            ON a.fuel_purchase_id = fp.id
-           AND a.attachment_type = 'receipt'
         WHERE fp.driver_id = ?
           AND fp.vehicle_id = ?
           AND fp.week_start_date = ?
@@ -932,7 +940,18 @@ function fleet_fetch_weekly_fuel_purchases(PDO $pdo, int $weeklyId): array
             v.vehicle_name,
             v.number_plate,
             ca.account_name,
-            a.id AS receipt_attachment_id
+            (
+                SELECT MAX(id)
+                FROM attachments
+                WHERE fuel_purchase_id = fp.id
+                  AND attachment_type = 'receipt'
+            ) AS receipt_attachment_id,
+            (
+                SELECT MAX(id)
+                FROM attachments
+                WHERE fuel_purchase_id = fp.id
+                  AND attachment_type = 'supporting_doc'
+            ) AS pump_photo_attachment_id
         FROM weekly_liquidation_items wli
         JOIN fuel_purchases fp
             ON fp.id = wli.fuel_purchase_id
@@ -940,9 +959,6 @@ function fleet_fetch_weekly_fuel_purchases(PDO $pdo, int $weeklyId): array
             ON v.id = fp.vehicle_id
         LEFT JOIN card_accounts ca
             ON ca.id = fp.card_account_id
-        LEFT JOIN attachments a
-            ON a.fuel_purchase_id = fp.id
-           AND a.attachment_type = 'receipt'
         WHERE wli.weekly_liquidation_id = ?
           AND wli.item_type = 'fuel_purchase'
         ORDER BY fp.purchase_date DESC, fp.id DESC

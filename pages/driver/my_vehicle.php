@@ -161,15 +161,23 @@ $recentFuelSql = "
         fp.*,
         u.name AS driver_name,
         ca.account_name,
-        a.id AS receipt_attachment_id
+        (
+            SELECT MAX(id)
+            FROM attachments
+            WHERE fuel_purchase_id = fp.id
+              AND attachment_type = 'receipt'
+        ) AS receipt_attachment_id,
+        (
+            SELECT MAX(id)
+            FROM attachments
+            WHERE fuel_purchase_id = fp.id
+              AND attachment_type = 'supporting_doc'
+        ) AS pump_photo_attachment_id
     FROM fuel_purchases fp
     LEFT JOIN users u
         ON u.id = fp.driver_id
     LEFT JOIN card_accounts ca
         ON ca.id = fp.card_account_id
-    LEFT JOIN attachments a
-        ON a.fuel_purchase_id = fp.id
-       AND a.attachment_type = 'receipt'
     WHERE fp.vehicle_id = ?
       AND fp.week_start_date = ?
       AND fp.record_status <> 'voided'
@@ -420,7 +428,7 @@ if (!$recentFuelPurchases) {
     echo '<div class="empty-state compact-empty">';
     echo '<div class="empty-state-icon"><i class="fas fa-receipt"></i></div>';
     echo '<h3>No fuel purchases yet</h3>';
-    echo '<p>Once fuel is bought using the TOM card, record it here with the receipt number and attachment.</p>';
+    echo '<p>Once fuel is bought using the TOM card, record it here with the receipt number, receipt attachment, and pump photo.</p>';
     echo '</div>';
 } else {
     echo '<div class="activity-list">';
@@ -436,11 +444,16 @@ if (!$recentFuelPurchases) {
         echo '<p class="activity-meta">' . $purchaseMeta . '</p>';
         echo '</div>';
         echo '<div class="activity-value">K ' . number_format((float) $purchase['amount'], 2) . '</div>';
+        echo '<div class="button-row">';
         if (!empty($purchase['receipt_attachment_id'])) {
             echo '<a class="inline-link-button" href="view_attachment.php?id=' . urlencode((string) $purchase['receipt_attachment_id']) . '" target="_blank"><i class="fas fa-paperclip"></i>Receipt</a>';
         } else {
-            echo '<span class="status-pill voided">Missing</span>';
+            echo '<span class="status-pill voided">Missing Receipt</span>';
         }
+        if (!empty($purchase['pump_photo_attachment_id'])) {
+            echo '<a class="inline-link-button" href="view_attachment.php?id=' . urlencode((string) $purchase['pump_photo_attachment_id']) . '" target="_blank"><i class="fas fa-camera"></i>Pump Photo</a>';
+        }
+        echo '</div>';
         echo '</div>';
     }
     echo '</div>';

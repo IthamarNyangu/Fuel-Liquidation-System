@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
     $litres = (float) ($_POST['litres'] ?? 0);
     $amount = (float) ($_POST['amount'] ?? 0);
     $notes = trim((string) ($_POST['notes'] ?? ''));
-    $movedFilePath = null;
+    $movedFilePaths = [];
 
     try {
         if ($cardAccountId <= 0) {
@@ -84,6 +84,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
 
         if ($_FILES['receipt_attachment']['size'] > 5 * 1024 * 1024) {
             throw new RuntimeException('Receipt attachment must be 5 MB or smaller.');
+        }
+
+        if (!isset($_FILES['pump_photo_attachment']) || $_FILES['pump_photo_attachment']['error'] === UPLOAD_ERR_NO_FILE) {
+            throw new RuntimeException('A fuel pump photo is required.');
+        }
+
+        if ($_FILES['pump_photo_attachment']['error'] !== UPLOAD_ERR_OK) {
+            throw new RuntimeException('The fuel pump photo upload failed. Please try again.');
+        }
+
+        if ($_FILES['pump_photo_attachment']['size'] > 5 * 1024 * 1024) {
+            throw new RuntimeException('Fuel pump photo must be 5 MB or smaller.');
         }
 
         $existingWeekly = fleet_find_weekly_liquidation($pdo, $user['id'], (int) $selectedVehicle['id'], $weekStart);
@@ -132,6 +144,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
             throw new RuntimeException('Only JPG, PNG, and PDF receipt uploads are allowed.');
         }
 
+        $allowedPumpPhotoMimeTypes = [
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+        ];
+        $detectedPumpPhotoType = $finfo->file($_FILES['pump_photo_attachment']['tmp_name']) ?: $_FILES['pump_photo_attachment']['type'];
+        if (!isset($allowedPumpPhotoMimeTypes[$detectedPumpPhotoType])) {
+            throw new RuntimeException('Only JPG, PNG, and WEBP fuel pump photos are allowed.');
+        }
+
         $uploadDirectory = $appRoot . '/uploads/receipts/' . date('Y') . '/' . date('m');
         if (!is_dir($uploadDirectory) && !mkdir($uploadDirectory, 0777, true) && !is_dir($uploadDirectory)) {
             throw new RuntimeException('Could not create the receipt upload directory.');
@@ -143,7 +165,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
         if (!move_uploaded_file($_FILES['receipt_attachment']['tmp_name'], $targetPath)) {
             throw new RuntimeException('Could not save the uploaded receipt file.');
         }
-        $movedFilePath = $targetPath;
+        $movedFilePaths[] = $targetPath;
+
+        $pumpPhotoUploadDirectory = $appRoot . '/uploads/fuel-pump-photos/' . date('Y') . '/' . date('m');
+        if (!is_dir($pumpPhotoUploadDirectory) && !mkdir($pumpPhotoUploadDirectory, 0777, true) && !is_dir($pumpPhotoUploadDirectory)) {
+            throw new RuntimeException('Could not create the fuel pump photo upload directory.');
+        }
+
+        $pumpPhotoStoredFilename = $safeBaseName . '-pump-' . uniqid('', true) . '.' . $allowedPumpPhotoMimeTypes[$detectedPumpPhotoType];
+        $pumpPhotoTargetPath = $pumpPhotoUploadDirectory . '/' . $pumpPhotoStoredFilename;
+        if (!move_uploaded_file($_FILES['pump_photo_attachment']['tmp_name'], $pumpPhotoTargetPath)) {
+            throw new RuntimeException('Could not save the uploaded fuel pump photo.');
+        }
+        $movedFilePaths[] = $pumpPhotoTargetPath;
 
         if ($odometerAtRefill > $latestKnown) {
             $issueNotes[] = 'Refill odometer is ahead of the last known reading. Check whether a movement leg is still missing before this refuel.';
@@ -219,6 +253,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
             $user['id'],
         ]);
 
+        $pumpPhotoRelativeStoragePath = str_replace('\\', '/', substr($pumpPhotoTargetPath, strlen($appRoot) + 1));
+        $attachmentStmt = $pdo->prepare("
+            INSERT INTO attachments (
+                fuel_purchase_id,
+                attachment_type,
+                storage_method,
+                original_name,
+                stored_name,
+                storage_path,
+                mime_type,
+                file_size_bytes,
+                uploaded_by
+            ) VALUES (?, 'supporting_doc', 'file', ?, ?, ?, ?, ?, ?)
+        ");
+        $attachmentStmt->execute([
+            $fuelPurchaseId,
+            $_FILES['pump_photo_attachment']['name'],
+            $pumpPhotoStoredFilename,
+            $pumpPhotoRelativeStoragePath,
+            $detectedPumpPhotoType,
+            (int) $_FILES['pump_photo_attachment']['size'],
+            $user['id'],
+        ]);
+
         $vehicleUpdateStmt = $pdo->prepare("
             UPDATE vehicles
             SET current_mileage = CASE
@@ -260,8 +318,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        if ($movedFilePath && is_file($movedFilePath)) {
-            @unlink($movedFilePath);
+        foreach ($movedFilePaths as $movedFilePath) {
+            if ($movedFilePath && is_file($movedFilePath)) {
+                @unlink($movedFilePath);
+            }
         }
         $pageError = $e->getMessage();
     }
@@ -280,13 +340,21 @@ if ($selectedVehicle) {
         SELECT
             fp.*,
             ca.account_name,
-            a.id AS receipt_attachment_id
+            (
+                SELECT MAX(id)
+                FROM attachments
+                WHERE fuel_purchase_id = fp.id
+                  AND attachment_type = 'receipt'
+            ) AS receipt_attachment_id,
+            (
+                SELECT MAX(id)
+                FROM attachments
+                WHERE fuel_purchase_id = fp.id
+                  AND attachment_type = 'supporting_doc'
+            ) AS pump_photo_attachment_id
         FROM fuel_purchases fp
         LEFT JOIN card_accounts ca
             ON ca.id = fp.card_account_id
-        LEFT JOIN attachments a
-            ON a.fuel_purchase_id = fp.id
-           AND a.attachment_type = 'receipt'
         WHERE fp.driver_id = ?
           AND fp.vehicle_id = ?
           AND fp.week_start_date = ?
@@ -302,7 +370,7 @@ fleet_render_shell_start(
     'Record Fuel Purchase',
     'fuel_purchase',
     $user,
-    'Fuel purchases stay separate from movement legs. Capture the actual refill, TOM card used, receipt details, receipt attachment, and odometer at refill.'
+    'Fuel purchases stay separate from movement legs. Capture the actual refill, TOM card used, receipt details, receipt attachment, fuel pump photo, and odometer at refill.'
 );
 
 if ($pageError !== '') {
@@ -321,7 +389,7 @@ if (!$selectedVehicle) {
 
 echo '<section class="panel">';
 echo '<div class="panel-header-split">';
-echo '<div><h2>Select Vehicle</h2><p>Pick the vehicle first, then record the refill details exactly as they appear on the receipt.</p></div>';
+echo '<div><h2>Select Vehicle</h2><p>Pick the vehicle first, then record the refill details exactly as they appear on the receipt and at the pump.</p></div>';
 echo '<a class="inline-link-button" href="my_vehicle.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '"><i class="fas fa-car-side"></i>Back to My Vehicle</a>';
 echo '</div>';
 echo '<div class="vehicle-switcher">';
@@ -362,18 +430,19 @@ echo '<div class="form-group span-4"><label for="litres">Litres</label><input id
 echo '<div class="form-group span-4"><label for="amount">Amount (ZMW)</label><input id="amount" type="number" step="0.01" min="0" name="amount" value="' . fleet_h($_POST['amount'] ?? '') . '" required></div>';
 echo '<div class="form-group span-4"><label for="unit_price_preview">Unit Price</label><input id="unit_price_preview" type="text" value="K 0.00" readonly><div class="input-hint">Calculated automatically from amount divided by litres.</div></div>';
 echo '<div class="form-group span-6"><label for="receipt_attachment">Receipt Attachment</label><input id="receipt_attachment" type="file" name="receipt_attachment" accept=".jpg,.jpeg,.png,.pdf" required><div class="input-hint">Allowed: JPG, PNG, PDF. Max 5 MB.</div></div>';
-echo '<div class="form-group span-6"><label for="notes">Notes</label><textarea id="notes" name="notes" placeholder="Optional notes about the refill">' . fleet_h($_POST['notes'] ?? '') . '</textarea></div>';
+echo '<div class="form-group span-6"><label for="pump_photo_attachment">Fuel Pump Photo</label><input id="pump_photo_attachment" type="file" name="pump_photo_attachment" accept=".jpg,.jpeg,.png,.webp" required><div class="input-hint">Take a clear photo of the pump reading during the refill.</div></div>';
+echo '<div class="form-group span-12"><label for="notes">Notes</label><textarea id="notes" name="notes" placeholder="Optional notes about the refill">' . fleet_h($_POST['notes'] ?? '') . '</textarea></div>';
 echo '<div class="form-group span-12"><div class="button-row"><button class="button" type="submit" ' . (!$cardAccounts ? 'disabled' : '') . '><i class="fas fa-save"></i>Save Fuel Purchase</button><a class="button-secondary" href="pending_reconciliations.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '"><i class="fas fa-clipboard-check"></i>Pending Reconciliations</a></div></div>';
 echo '</form>';
 echo '</section>';
 
 echo '<section class="panel">';
-echo '<div class="panel-header"><div><h2>Current Fuel Purchases</h2><p>Every saved purchase stays pending until you include it in a reconciliation package and submit it for review.</p></div></div>';
+echo '<div class="panel-header"><div><h2>Current Fuel Purchases</h2><p>Every saved purchase stays pending until you include it in a reconciliation package and submit it for review with its receipt and pump photo.</p></div></div>';
 if (!$recentFuelPurchases) {
     echo '<div class="empty-state">';
     echo '<div class="empty-state-icon"><i class="fas fa-receipt"></i></div>';
     echo '<h3>No purchases recorded yet</h3>';
-    echo '<p>Once you save the first refill and attach its receipt, it will appear here and stay pending until you submit it inside a reconciliation package.</p>';
+    echo '<p>Once you save the first refill with its receipt and pump photo, it will appear here and stay pending until you submit it inside a reconciliation package.</p>';
     echo '</div>';
 } else {
     echo '<div class="data-list">';
@@ -392,6 +461,9 @@ if (!$recentFuelPurchases) {
         echo '<div class="button-row" style="margin-top:12px;">';
         if (!empty($purchase['receipt_attachment_id'])) {
             echo '<a class="button-ghost" href="view_attachment.php?id=' . urlencode((string) $purchase['receipt_attachment_id']) . '" target="_blank"><i class="fas fa-paperclip"></i>View Receipt</a>';
+        }
+        if (!empty($purchase['pump_photo_attachment_id'])) {
+            echo '<a class="button-ghost" href="view_attachment.php?id=' . urlencode((string) $purchase['pump_photo_attachment_id']) . '" target="_blank"><i class="fas fa-camera"></i>View Pump Photo</a>';
         }
         echo '</div>';
         if (!empty($purchase['issue_notes'])) {

@@ -323,7 +323,7 @@ if (!$selectedWeekly) {
     echo '</section>';
 
     echo '<section class="panel" style="margin-bottom:0;">';
-    echo '<div class="panel-header"><div><h2>Fuel Purchases</h2><p>Check amount, litres, station, receipt number, and the attached receipt for each purchase.</p></div></div>';
+    echo '<div class="panel-header"><div><h2>Fuel Purchases</h2><p>Check amount, litres, station, receipt number, receipt attachment, and fuel pump photo for each purchase.</p></div></div>';
     if (!$selectedFuelPurchases) {
         echo '<p class="helper-text">No fuel purchases are attached to this reconciliation package.</p>';
     } else {
@@ -345,6 +345,9 @@ if (!$selectedWeekly) {
                 echo '<a class="button-ghost" href="view_attachment.php?id=' . urlencode((string) $purchase['receipt_attachment_id']) . '" target="_blank"><i class="fas fa-paperclip"></i>View Receipt</a>';
             } else {
                 echo '<span class="helper-text issue-hint"><i class="fas fa-triangle-exclamation"></i> Receipt missing</span>';
+            }
+            if (!empty($purchase['pump_photo_attachment_id'])) {
+                echo '<a class="button-ghost" href="view_attachment.php?id=' . urlencode((string) $purchase['pump_photo_attachment_id']) . '" target="_blank"><i class="fas fa-camera"></i>View Pump Photo</a>';
             }
             echo '</div>';
             if (!empty($purchase['issue_notes'])) {
