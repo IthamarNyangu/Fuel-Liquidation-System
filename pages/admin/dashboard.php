@@ -139,29 +139,47 @@ $viewMode = $_GET['view'] ?? 'all'; // all, requisitions, logbook
 $itemsPerPage = 5;
 $currentPage = max(1, (int)($_GET['page'] ?? 1));
 
-// Fetch available years
-$yearsQuery = "SELECT DISTINCT YEAR(r.request_date) as year 
-               FROM requisitions r
-               JOIN users u ON r.staff_id = u.id
-               WHERE 1=1 " . $facility_filter_sql . $staff_filter_sql . " 
-               UNION
-               SELECT DISTINCT YEAR(l.log_date) as year
-               FROM logbook l
-               JOIN users u ON l.driver_id = u.id
-               WHERE 1=1 " . $facility_filter_sql . $staff_filter_sql . "
-               ORDER BY year DESC";
+// Fetch available years from live reconciliation and movement data.
+$yearsScopeSql = '';
+$yearsScopeParams = [];
+if (!$is_super_admin && $user_facility_id) {
+    $yearsScopeSql = " AND COALESCE(scope_facility_id, 0) = :years_facility_id";
+    $yearsScopeParams[':years_facility_id'] = (int) $user_facility_id;
+} elseif ($is_super_admin && $selected_facility_id > 0) {
+    $yearsScopeSql = " AND COALESCE(scope_facility_id, 0) = :years_facility_id";
+    $yearsScopeParams[':years_facility_id'] = $selected_facility_id;
+}
+
+$yearsQuery = "
+    SELECT DISTINCT year_value
+    FROM (
+        SELECT
+            YEAR(COALESCE(wl.reviewed_at, wl.submitted_at, wl.updated_at, wl.created_at)) AS year_value,
+            COALESCE(wl.facility_id, v.facility_id, driver.facility_id) AS scope_facility_id
+        FROM weekly_liquidations wl
+        JOIN vehicles v
+            ON v.id = wl.vehicle_id
+        JOIN users driver
+            ON driver.id = wl.driver_id
+        WHERE wl.status IN ('submitted', 'under_review', 'returned', 'approved')
+
+        UNION
+
+        SELECT
+            YEAR(tl.movement_date) AS year_value,
+            COALESCE(tl.facility_id, v.facility_id, driver.facility_id) AS scope_facility_id
+        FROM trip_legs tl
+        JOIN vehicles v
+            ON v.id = tl.vehicle_id
+        JOIN users driver
+            ON driver.id = tl.driver_id
+        WHERE tl.record_status IN ('recorded', 'completed', 'locked')
+          AND tl.total_km IS NOT NULL
+    ) year_sources
+    WHERE year_value IS NOT NULL" . $yearsScopeSql . "
+    ORDER BY year_value DESC";
 $yearsStmt = $pdo->prepare($yearsQuery);
-foreach ($facility_filter_params as $key => $value) {
-    $yearsStmt->bindValue($key, $value);
-}
-foreach ($staff_filter_params as $key => $value) {
-    $yearsStmt->bindValue($key, $value);
-}
-// Bind again for the second part of UNION
-foreach ($facility_filter_params as $key => $value) {
-    $yearsStmt->bindValue($key, $value);
-}
-foreach ($staff_filter_params as $key => $value) {
+foreach ($yearsScopeParams as $key => $value) {
     $yearsStmt->bindValue($key, $value);
 }
 $yearsStmt->execute();
@@ -255,254 +273,308 @@ $settings = $stmt->fetch(PDO::FETCH_ASSOC);
 $availableFuel = $settings['available_fuel'] ?? 0;
 $currentFuelPrice = $settings['fuel_price'] ?? 0;
 
-// Fetch approved requisitions
-$approvedQuery = "
-    SELECT COUNT(*) as count, SUM(r.requested_amount * r.fuel_price_per_liter) as total 
-    FROM requisitions r
-    JOIN users u ON r.staff_id = u.id
-    WHERE r.status = 'approved' AND r.request_date BETWEEN :start_date AND :end_date" . $facility_filter_sql . $staff_filter_sql;
-$approvedStmt = $pdo->prepare($approvedQuery);
-$approvedStmt->bindValue(':start_date', $startDate);
-$approvedStmt->bindValue(':end_date', $endDate);
-foreach ($facility_filter_params as $key => $value) {
-    $approvedStmt->bindValue($key, $value);
+// Dashboard now reads live reconciliation and movement data from the redesigned workflow.
+$reconciliationScopeSql = '';
+$reconciliationScopeParams = [];
+if (!$is_super_admin && $user_facility_id) {
+    $reconciliationScopeSql = " AND COALESCE(wl.facility_id, v.facility_id, driver.facility_id) = :scope_facility_id";
+    $reconciliationScopeParams[':scope_facility_id'] = (int) $user_facility_id;
+} elseif ($is_super_admin && $selected_facility_id > 0) {
+    $reconciliationScopeSql = " AND COALESCE(wl.facility_id, v.facility_id, driver.facility_id) = :scope_facility_id";
+    $reconciliationScopeParams[':scope_facility_id'] = $selected_facility_id;
 }
-foreach ($staff_filter_params as $key => $value) {
-    $approvedStmt->bindValue($key, $value);
-}
-$approvedStmt->execute();
-$approved = $approvedStmt->fetch(PDO::FETCH_ASSOC);
-$approvedCount = $approved['count'];
-$approvedSum = $approved['total'] ?? 0;
 
-// Fetch rejected requisitions
-$rejectedQuery = "
-    SELECT COUNT(*) as count, SUM(r.requested_amount * r.fuel_price_per_liter) as total 
-    FROM requisitions r
-    JOIN users u ON r.staff_id = u.id
-    WHERE r.status = 'rejected' AND r.request_date BETWEEN :start_date AND :end_date" . $facility_filter_sql . $staff_filter_sql;
-$rejectedStmt = $pdo->prepare($rejectedQuery);
-$rejectedStmt->bindValue(':start_date', $startDate);
-$rejectedStmt->bindValue(':end_date', $endDate);
-foreach ($facility_filter_params as $key => $value) {
-    $rejectedStmt->bindValue($key, $value);
+$movementScopeSql = '';
+$movementScopeParams = [];
+if (!$is_super_admin && $user_facility_id) {
+    $movementScopeSql = " AND COALESCE(tl.facility_id, v.facility_id, driver.facility_id) = :scope_facility_id";
+    $movementScopeParams[':scope_facility_id'] = (int) $user_facility_id;
+} elseif ($is_super_admin && $selected_facility_id > 0) {
+    $movementScopeSql = " AND COALESCE(tl.facility_id, v.facility_id, driver.facility_id) = :scope_facility_id";
+    $movementScopeParams[':scope_facility_id'] = $selected_facility_id;
 }
-foreach ($staff_filter_params as $key => $value) {
-    $rejectedStmt->bindValue($key, $value);
-}
-$rejectedStmt->execute();
-$rejected = $rejectedStmt->fetch(PDO::FETCH_ASSOC);
-$rejectedCount = $rejected['count'];
-$rejectedSum = $rejected['total'] ?? 0;
 
-// Fetch pending requisitions
-$pendingQuery = "
-    SELECT COUNT(*) as count, SUM(r.requested_amount * r.fuel_price_per_liter) as total 
-    FROM requisitions r
-    JOIN users u ON r.staff_id = u.id
-    WHERE r.status = 'pending' AND r.request_date BETWEEN :start_date AND :end_date" . $facility_filter_sql . $staff_filter_sql;
-$pendingStmt = $pdo->prepare($pendingQuery);
-$pendingStmt->bindValue(':start_date', $startDate);
-$pendingStmt->bindValue(':end_date', $endDate);
-foreach ($facility_filter_params as $key => $value) {
-    $pendingStmt->bindValue($key, $value);
-}
-foreach ($staff_filter_params as $key => $value) {
-    $pendingStmt->bindValue($key, $value);
-}
-$pendingStmt->execute();
-$pending = $pendingStmt->fetch(PDO::FETCH_ASSOC);
-$pendingCount = $pending['count'];
-$pendingSum = $pending['total'] ?? 0;
+$mapDashboardStatusToWorkflow = static function (string $dashboardStatus): array {
+    return match ($dashboardStatus) {
+        'approved' => ['approved'],
+        'rejected' => ['returned'],
+        'pending' => ['submitted', 'under_review'],
+        default => [],
+    };
+};
 
-// Fetch logbook stats
-$logbookStatsQuery = "
-    SELECT COUNT(*) as count, SUM(l.total_kms) as total_kms
-    FROM logbook l
-    JOIN users u ON l.driver_id = u.id
-    WHERE l.log_date BETWEEN :start_date AND :end_date" . $facility_filter_sql . $staff_filter_sql;
-$logbookStatsStmt = $pdo->prepare($logbookStatsQuery);
-$logbookStatsStmt->bindValue(':start_date', $startDate);
-$logbookStatsStmt->bindValue(':end_date', $endDate);
-foreach ($facility_filter_params as $key => $value) {
-    $logbookStatsStmt->bindValue($key, $value);
+$reconciliationStatsSql = "
+    SELECT
+        COALESCE(SUM(CASE WHEN wl.status = 'approved' THEN 1 ELSE 0 END), 0) AS approved_count,
+        COALESCE(SUM(CASE WHEN wl.status = 'approved' THEN wl.total_fuel_amount ELSE 0 END), 0) AS approved_total,
+        COALESCE(SUM(CASE WHEN wl.status = 'returned' THEN 1 ELSE 0 END), 0) AS rejected_count,
+        COALESCE(SUM(CASE WHEN wl.status = 'returned' THEN wl.total_fuel_amount ELSE 0 END), 0) AS rejected_total,
+        COALESCE(SUM(CASE WHEN wl.status IN ('submitted', 'under_review') THEN 1 ELSE 0 END), 0) AS pending_count,
+        COALESCE(SUM(CASE WHEN wl.status IN ('submitted', 'under_review') THEN wl.total_fuel_amount ELSE 0 END), 0) AS pending_total
+    FROM weekly_liquidations wl
+    JOIN vehicles v
+        ON v.id = wl.vehicle_id
+    JOIN users driver
+        ON driver.id = wl.driver_id
+    WHERE wl.status IN ('submitted', 'under_review', 'returned', 'approved')
+      AND DATE(COALESCE(wl.reviewed_at, wl.submitted_at, wl.updated_at, wl.created_at)) BETWEEN :start_date AND :end_date" . $reconciliationScopeSql;
+$reconciliationStatsStmt = $pdo->prepare($reconciliationStatsSql);
+$reconciliationStatsStmt->bindValue(':start_date', $startDate);
+$reconciliationStatsStmt->bindValue(':end_date', $endDate);
+foreach ($reconciliationScopeParams as $key => $value) {
+    $reconciliationStatsStmt->bindValue($key, $value);
 }
-foreach ($staff_filter_params as $key => $value) {
-    $logbookStatsStmt->bindValue($key, $value);
-}
-$logbookStatsStmt->execute();
-$logbookStats = $logbookStatsStmt->fetch(PDO::FETCH_ASSOC);
-$logbookCount = $logbookStats['count'] ?? 0;
-$logbookTotalKms = $logbookStats['total_kms'] ?? 0;
+$reconciliationStatsStmt->execute();
+$reconciliationStats = $reconciliationStatsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+$approvedCount = (int) ($reconciliationStats['approved_count'] ?? 0);
+$approvedSum = (float) ($reconciliationStats['approved_total'] ?? 0);
+$rejectedCount = (int) ($reconciliationStats['rejected_count'] ?? 0);
+$rejectedSum = (float) ($reconciliationStats['rejected_total'] ?? 0);
+$pendingCount = (int) ($reconciliationStats['pending_count'] ?? 0);
+$pendingSum = (float) ($reconciliationStats['pending_total'] ?? 0);
 
-// Fetch requisitions
+$movementStatsSql = "
+    SELECT
+        COUNT(*) AS count,
+        COALESCE(SUM(tl.total_km), 0) AS total_kms
+    FROM trip_legs tl
+    JOIN vehicles v
+        ON v.id = tl.vehicle_id
+    JOIN users driver
+        ON driver.id = tl.driver_id
+    WHERE tl.record_status IN ('recorded', 'completed', 'locked')
+      AND tl.total_km IS NOT NULL
+      AND tl.movement_date BETWEEN :start_date AND :end_date" . $movementScopeSql;
+$movementStatsStmt = $pdo->prepare($movementStatsSql);
+$movementStatsStmt->bindValue(':start_date', $startDate);
+$movementStatsStmt->bindValue(':end_date', $endDate);
+foreach ($movementScopeParams as $key => $value) {
+    $movementStatsStmt->bindValue($key, $value);
+}
+$movementStatsStmt->execute();
+$movementStats = $movementStatsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+$logbookCount = (int) ($movementStats['count'] ?? 0);
+$logbookTotalKms = (float) ($movementStats['total_kms'] ?? 0);
+
 $requisitions = [];
 if ($viewMode === 'all' || $viewMode === 'requisitions') {
-    $query = "
-        SELECT 
-            r.id,
-            'fuel_request' as entry_type,
-            u.name as staff_name,
+    $reconciliationQuery = "
+        SELECT
+            wl.id,
+            'fuel_liquidation' AS entry_type,
+            driver.name AS driver_name,
             v.vehicle_name,
             v.number_plate,
-            r.requested_amount,
-            r.fuel_price_per_liter,
-            r.float_account,
-            r.activity_name,
-            r.mileage,
-            r.filling_station,
-            r.receipt_number,
-            r.receipt_filename,
-            r.receipt_type,
-            r.request_date,
-            r.request_time,
-            r.notes,
-            r.status,
-            (r.requested_amount * r.fuel_price_per_liter) as total_cost,
-            approver.name as approver_name,
-            r.created_at
-        FROM requisitions r
-        JOIN users u ON r.staff_id = u.id
-        JOIN vehicles v ON r.vehicle_id = v.id
-        LEFT JOIN users approver ON r.approver_id = approver.id
-        WHERE 1=1" . $facility_filter_sql . $staff_filter_sql;
+            COALESCE(f.facility_name, 'Unassigned Province') AS province_name,
+            wl.week_start_date,
+            wl.week_end_date,
+            wl.total_trip_legs,
+            wl.total_km,
+            wl.total_fuel_litres,
+            wl.total_fuel_amount,
+            COALESCE(fuel_item_counts.total_fuel_purchases, 0) AS fuel_purchase_count,
+            wl.review_notes,
+            wl.return_reason,
+            reviewer.name AS reviewer_name,
+            COALESCE(wl.reviewed_at, wl.submitted_at, wl.updated_at, wl.created_at) AS activity_at,
+            DATE(COALESCE(wl.reviewed_at, wl.submitted_at, wl.updated_at, wl.created_at)) AS entry_date,
+            CASE
+                WHEN wl.status = 'returned' THEN 'rejected'
+                WHEN wl.status IN ('submitted', 'under_review') THEN 'pending'
+                ELSE 'approved'
+            END AS status
+        FROM weekly_liquidations wl
+        JOIN vehicles v
+            ON v.id = wl.vehicle_id
+        JOIN users driver
+            ON driver.id = wl.driver_id
+        LEFT JOIN users reviewer
+            ON reviewer.id = wl.reviewed_by
+        LEFT JOIN facilities f
+            ON f.id = COALESCE(wl.facility_id, v.facility_id, driver.facility_id)
+        LEFT JOIN (
+            SELECT
+                weekly_liquidation_id,
+                COUNT(*) AS total_fuel_purchases
+            FROM weekly_liquidation_items
+            WHERE item_type = 'fuel_purchase'
+            GROUP BY weekly_liquidation_id
+        ) fuel_item_counts
+            ON fuel_item_counts.weekly_liquidation_id = wl.id
+        WHERE wl.status IN ('submitted', 'under_review', 'returned', 'approved')" . $reconciliationScopeSql;
 
-    $params = array_merge($facility_filter_params, $staff_filter_params);
+    $reconciliationParams = $reconciliationScopeParams;
 
     if ($filterStatus) {
-        $query .= " AND r.status = :filter_status";
-        $params[':filter_status'] = $filterStatus;
+        $workflowStatuses = $mapDashboardStatusToWorkflow($filterStatus);
+        if ($workflowStatuses) {
+            $statusPlaceholders = [];
+            foreach ($workflowStatuses as $index => $workflowStatus) {
+                $placeholder = ':filter_status_' . $index;
+                $statusPlaceholders[] = $placeholder;
+                $reconciliationParams[$placeholder] = $workflowStatus;
+            }
+            $reconciliationQuery .= " AND wl.status IN (" . implode(', ', $statusPlaceholders) . ")";
+        }
     }
     if ($filterStaff) {
-        $query .= " AND u.name LIKE :filter_staff";
-        $params[':filter_staff'] = "%$filterStaff%";
+        $reconciliationQuery .= " AND driver.name LIKE :filter_staff";
+        $reconciliationParams[':filter_staff'] = "%$filterStaff%";
     }
     if ($filterVehicle) {
-        $query .= " AND (v.vehicle_name LIKE :filter_vehicle1 OR v.number_plate LIKE :filter_vehicle2)";
-        $params[':filter_vehicle1'] = "%$filterVehicle%";
-        $params[':filter_vehicle2'] = "%$filterVehicle%";
+        $reconciliationQuery .= " AND (v.vehicle_name LIKE :filter_vehicle1 OR v.number_plate LIKE :filter_vehicle2)";
+        $reconciliationParams[':filter_vehicle1'] = "%$filterVehicle%";
+        $reconciliationParams[':filter_vehicle2'] = "%$filterVehicle%";
     }
     if ($filterMonth && $filterYear) {
-        $query .= " AND DATE_FORMAT(r.request_date, '%Y-%m') = :filter_month_year";
-        $params[':filter_month_year'] = $filterYear . '-' . $filterMonth;
+        $reconciliationQuery .= " AND DATE_FORMAT(COALESCE(wl.reviewed_at, wl.submitted_at, wl.updated_at, wl.created_at), '%Y-%m') = :filter_month_year";
+        $reconciliationParams[':filter_month_year'] = $filterYear . '-' . $filterMonth;
     } elseif ($filterMonth) {
-        $query .= " AND MONTH(r.request_date) = :filter_month";
-        $params[':filter_month'] = $filterMonth;
+        $reconciliationQuery .= " AND MONTH(COALESCE(wl.reviewed_at, wl.submitted_at, wl.updated_at, wl.created_at)) = :filter_month";
+        $reconciliationParams[':filter_month'] = $filterMonth;
     } elseif ($filterYear) {
-        $query .= " AND YEAR(r.request_date) = :filter_year";
-        $params[':filter_year'] = $filterYear;
+        $reconciliationQuery .= " AND YEAR(COALESCE(wl.reviewed_at, wl.submitted_at, wl.updated_at, wl.created_at)) = :filter_year";
+        $reconciliationParams[':filter_year'] = $filterYear;
     }
     if ($filterAmount) {
-        $query .= " AND r.requested_amount >= :filter_amount";
-        $params[':filter_amount'] = $filterAmount;
+        $reconciliationQuery .= " AND wl.total_fuel_amount >= :filter_amount";
+        $reconciliationParams[':filter_amount'] = $filterAmount;
     }
 
-    // Sorting
-    if ($sortBy === 'amount') {
-        $query .= " ORDER BY r.requested_amount " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC');
-    } elseif ($sortBy === 'price') {
-        $query .= " ORDER BY r.fuel_price_per_liter " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC');
+    if ($sortBy === 'province') {
+        $reconciliationQuery .= " ORDER BY COALESCE(f.facility_name, '') " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
+    } elseif ($sortBy === 'driver') {
+        $reconciliationQuery .= " ORDER BY driver.name " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
+    } elseif ($sortBy === 'vehicle') {
+        $reconciliationQuery .= " ORDER BY v.vehicle_name " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
+    } elseif ($sortBy === 'litres') {
+        $reconciliationQuery .= " ORDER BY wl.total_fuel_litres " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
+    } elseif ($sortBy === 'purchases') {
+        $reconciliationQuery .= " ORDER BY COALESCE(fuel_item_counts.total_fuel_purchases, 0) " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
     } elseif ($sortBy === 'total') {
-        $query .= " ORDER BY (r.requested_amount * r.fuel_price_per_liter) " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC');
+        $reconciliationQuery .= " ORDER BY wl.total_fuel_amount " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
+    } elseif ($sortBy === 'recent') {
+        $reconciliationQuery .= " ORDER BY activity_at " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC');
     } else {
-        $query .= " ORDER BY r.created_at DESC";
+        $reconciliationQuery .= " ORDER BY activity_at DESC";
     }
 
-    $stmt = $pdo->prepare($query);
-    foreach ($params as $key => $value) {
-        $stmt->bindValue($key, $value);
+    $reconciliationStmt = $pdo->prepare($reconciliationQuery);
+    foreach ($reconciliationParams as $key => $value) {
+        $reconciliationStmt->bindValue($key, $value);
     }
-    $stmt->execute();
-    $requisitions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $reconciliationStmt->execute();
+    $requisitions = $reconciliationStmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// Fetch logbook entries
 $logbookEntries = [];
 if ($viewMode === 'all' || $viewMode === 'logbook') {
-    // Build facility filter for logbook
-    $logbook_facility_filter = "";
-    $logbook_params = [];
-    if (!$is_super_admin && $user_facility_id) {
-        $logbook_facility_filter = " AND u.facility_id = :facility_id";
-        $logbook_params[':facility_id'] = $user_facility_id;
-    } elseif ($is_super_admin && $selected_facility_id > 0) {
-        $logbook_facility_filter = " AND u.facility_id = :facility_id";
-        $logbook_params[':facility_id'] = $selected_facility_id;
-    }
-    
-    // Build staff-only filter for logbook (check driver_id)
-    $logbook_staff_filter = "";
-    if ($user_role === 'driver') {
-        $logbook_staff_filter = " AND u.id = :staff_user_id";
-        $logbook_params[':staff_user_id'] = $_SESSION['user_id'];
-    }
-
-    $logbookQuery = "
-        SELECT 
-            l.id,
-            'logbook' as entry_type,
-            l.log_date,
-            l.purpose,
-            l.location_from,
-            l.location_to,
-            l.time_out,
-            l.time_in,
-            l.start_kms,
-            l.end_kms,
-            l.total_kms,
-            driver.name as driver_name,
+    $movementQuery = "
+        SELECT
+            tl.id,
+            'logbook' AS entry_type,
+            driver.name AS driver_name,
             v.vehicle_name,
             v.number_plate,
-            approver.name as approver_name,
-            l.created_at
-        FROM logbook l
-        JOIN users driver ON l.driver_id = driver.id
-        JOIN vehicles v ON l.vehicle_id = v.id
-        LEFT JOIN users approver ON l.approver_id = approver.id
-        JOIN users u ON l.driver_id = u.id
-        WHERE 1=1" . $logbook_facility_filter . $logbook_staff_filter;
+            COALESCE(f.facility_name, 'Unassigned Province') AS province_name,
+            tl.movement_date AS log_date,
+            tl.from_location AS location_from,
+            tl.to_location AS location_to,
+            tl.purpose,
+            tl.time_out,
+            tl.time_in,
+            tl.odometer_start_km AS start_kms,
+            tl.odometer_end_km AS end_kms,
+            tl.total_km AS total_kms,
+            tl.record_status,
+            TIMESTAMP(tl.movement_date, COALESCE(tl.time_in, tl.time_out, '00:00:00')) AS activity_at
+        FROM trip_legs tl
+        JOIN vehicles v
+            ON v.id = tl.vehicle_id
+        JOIN users driver
+            ON driver.id = tl.driver_id
+        LEFT JOIN facilities f
+            ON f.id = COALESCE(tl.facility_id, v.facility_id, driver.facility_id)
+        WHERE tl.record_status IN ('recorded', 'completed', 'locked')
+          AND tl.total_km IS NOT NULL" . $movementScopeSql;
+
+    $movementParams = $movementScopeParams;
 
     if ($filterStaff) {
-        $logbookQuery .= " AND driver.name LIKE :filter_staff";
-        $logbook_params[':filter_staff'] = "%$filterStaff%";
+        $movementQuery .= " AND driver.name LIKE :filter_staff";
+        $movementParams[':filter_staff'] = "%$filterStaff%";
     }
     if ($filterVehicle) {
-        $logbookQuery .= " AND (v.vehicle_name LIKE :filter_vehicle1 OR v.number_plate LIKE :filter_vehicle2)";
-        $logbook_params[':filter_vehicle1'] = "%$filterVehicle%";
-        $logbook_params[':filter_vehicle2'] = "%$filterVehicle%";
+        $movementQuery .= " AND (v.vehicle_name LIKE :filter_vehicle1 OR v.number_plate LIKE :filter_vehicle2)";
+        $movementParams[':filter_vehicle1'] = "%$filterVehicle%";
+        $movementParams[':filter_vehicle2'] = "%$filterVehicle%";
     }
     if ($filterMonth && $filterYear) {
-        $logbookQuery .= " AND DATE_FORMAT(l.log_date, '%Y-%m') = :filter_month_year";
-        $logbook_params[':filter_month_year'] = $filterYear . '-' . $filterMonth;
+        $movementQuery .= " AND DATE_FORMAT(tl.movement_date, '%Y-%m') = :filter_month_year";
+        $movementParams[':filter_month_year'] = $filterYear . '-' . $filterMonth;
     } elseif ($filterMonth) {
-        $logbookQuery .= " AND MONTH(l.log_date) = :filter_month";
-        $logbook_params[':filter_month'] = $filterMonth;
+        $movementQuery .= " AND MONTH(tl.movement_date) = :filter_month";
+        $movementParams[':filter_month'] = $filterMonth;
     } elseif ($filterYear) {
-        $logbookQuery .= " AND YEAR(l.log_date) = :filter_year";
-        $logbook_params[':filter_year'] = $filterYear;
+        $movementQuery .= " AND YEAR(tl.movement_date) = :filter_year";
+        $movementParams[':filter_year'] = $filterYear;
     }
 
-    // Sorting for logbook
-    if ($sortBy === 'kms') {
-        $logbookQuery .= " ORDER BY l.total_kms " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC');
+    if ($sortBy === 'province') {
+        $movementQuery .= " ORDER BY COALESCE(f.facility_name, '') " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
+    } elseif ($sortBy === 'driver') {
+        $movementQuery .= " ORDER BY driver.name " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
+    } elseif ($sortBy === 'vehicle') {
+        $movementQuery .= " ORDER BY v.vehicle_name " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
+    } elseif ($sortBy === 'kms') {
+        $movementQuery .= " ORDER BY tl.total_km " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC') . ", activity_at DESC";
+    } elseif ($sortBy === 'recent') {
+        $movementQuery .= " ORDER BY activity_at " . ($sortOrder === 'ASC' ? 'ASC' : 'DESC');
     } else {
-        $logbookQuery .= " ORDER BY l.created_at DESC";
+        $movementQuery .= " ORDER BY activity_at DESC";
     }
 
-    $logbookStmt = $pdo->prepare($logbookQuery);
-    foreach ($logbook_params as $key => $value) {
-        $logbookStmt->bindValue($key, $value);
+    $movementStmt = $pdo->prepare($movementQuery);
+    foreach ($movementParams as $key => $value) {
+        $movementStmt->bindValue($key, $value);
     }
-    $logbookStmt->execute();
-    $logbookEntries = $logbookStmt->fetchAll(PDO::FETCH_ASSOC);
+    $movementStmt->execute();
+    $logbookEntries = $movementStmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// Combine and sort entries if viewing all
 $allEntries = [];
 if ($viewMode === 'all') {
     $allEntries = array_merge($requisitions, $logbookEntries);
-    usort($allEntries, function($a, $b) {
-        return strtotime($b['created_at']) - strtotime($a['created_at']);
+    $allSortBy = $sortBy ?: 'recent';
+    $allSortOrder = $sortOrder === 'ASC' ? 'ASC' : 'DESC';
+    usort($allEntries, static function (array $a, array $b) use ($allSortBy, $allSortOrder): int {
+        $direction = $allSortOrder === 'ASC' ? 1 : -1;
+
+        switch ($allSortBy) {
+            case 'province':
+                $left = strtolower((string) ($a['province_name'] ?? ''));
+                $right = strtolower((string) ($b['province_name'] ?? ''));
+                break;
+            case 'driver':
+                $left = strtolower((string) ($a['driver_name'] ?? $a['staff_name'] ?? ''));
+                $right = strtolower((string) ($b['driver_name'] ?? $b['staff_name'] ?? ''));
+                break;
+            case 'vehicle':
+                $left = strtolower((string) ($a['vehicle_name'] ?? ''));
+                $right = strtolower((string) ($b['vehicle_name'] ?? ''));
+                break;
+            case 'recent':
+            default:
+                $left = strtotime((string) ($a['activity_at'] ?? $a['created_at'] ?? 'now'));
+                $right = strtotime((string) ($b['activity_at'] ?? $b['created_at'] ?? 'now'));
+                break;
+        }
+
+        if ($left === $right) {
+            return 0;
+        }
+
+        return $left <=> $right ? (($left <=> $right) * $direction) : 0;
     });
 }
 
@@ -524,6 +596,42 @@ $buildPageUrl = function($page) {
     $params['page'] = $page;
     return 'dashboard.php?' . http_build_query($params);
 };
+
+$viewTitle = match ($viewMode) {
+    'requisitions' => 'Recent Fuel Liquidations',
+    'logbook' => 'Recent Log Movements',
+    default => 'All Recent Entries',
+};
+
+$sortOptions = match ($viewMode) {
+    'requisitions' => [
+        ['value' => 'recent_desc', 'label' => 'Most Recent'],
+        ['value' => 'recent_asc', 'label' => 'Oldest First'],
+        ['value' => 'total_desc', 'label' => 'Highest Total'],
+        ['value' => 'total_asc', 'label' => 'Lowest Total'],
+        ['value' => 'purchases_desc', 'label' => 'Most Fuel Purchases'],
+        ['value' => 'purchases_asc', 'label' => 'Fewest Fuel Purchases'],
+        ['value' => 'province_asc', 'label' => 'Province A-Z'],
+        ['value' => 'province_desc', 'label' => 'Province Z-A'],
+    ],
+    'logbook' => [
+        ['value' => 'recent_desc', 'label' => 'Most Recent'],
+        ['value' => 'recent_asc', 'label' => 'Oldest First'],
+        ['value' => 'kms_desc', 'label' => 'Longest Distance'],
+        ['value' => 'kms_asc', 'label' => 'Shortest Distance'],
+        ['value' => 'province_asc', 'label' => 'Province A-Z'],
+        ['value' => 'province_desc', 'label' => 'Province Z-A'],
+    ],
+    default => [
+        ['value' => 'recent_desc', 'label' => 'Most Recent'],
+        ['value' => 'recent_asc', 'label' => 'Oldest First'],
+        ['value' => 'province_asc', 'label' => 'Province A-Z'],
+        ['value' => 'province_desc', 'label' => 'Province Z-A'],
+        ['value' => 'driver_asc', 'label' => 'Driver A-Z'],
+        ['value' => 'vehicle_asc', 'label' => 'Vehicle A-Z'],
+    ],
+};
+$currentSortValue = $sortBy !== '' ? $sortBy . '_' . strtolower($sortOrder) : '';
 
 // Get facility name for display
 if ($is_super_admin) {
@@ -690,7 +798,7 @@ if ($is_super_admin) {
                     <i class="fas fa-th-list"></i> All Entries
                 </button>
                 <button class="view-tab <?php echo $viewMode === 'requisitions' ? 'active' : ''; ?>" onclick="changeView('requisitions')">
-                    <i class="fas fa-gas-pump"></i> Fuel Requests
+                    <i class="fas fa-gas-pump"></i> Fuel Liquidations
                 </button>
                 <button class="view-tab <?php echo $viewMode === 'logbook' ? 'active' : ''; ?>" onclick="changeView('logbook')">
                     <i class="fas fa-book"></i> Logbook
@@ -700,20 +808,9 @@ if ($is_super_admin) {
             <!-- Entries List -->
             <div class="requests-container" id="entries-section">
                 <div class="card-header">
-                    <h2 class="card-title">
-                        <?php 
-                        if ($viewMode === 'requisitions') {
-                            echo 'Recent Requisitions';
-                        } elseif ($viewMode === 'logbook') {
-                            echo 'Recent Logbook Entries';
-                        } else {
-                            echo 'All Recent Entries';
-                        }
-                        ?>
-                    </h2>
+                    <h2 class="card-title"><?php echo htmlspecialchars($viewTitle); ?></h2>
                     <div class="filter-controls">
-                        <?php if ($viewMode !== 'logbook'): ?>
-                        <select class="sort-select" onchange="sortTable(this.value)">
+                        <select class="sort-select" onchange="sortTable(this.value)" style="display:none;">
                             <option value="">Sort by...</option>
                             <option value="amount_desc" <?php echo ($sortBy === 'amount' && $sortOrder === 'DESC') ? 'selected' : ''; ?>>Amount ↓</option>
                             <option value="amount_asc" <?php echo ($sortBy === 'amount' && $sortOrder === 'ASC') ? 'selected' : ''; ?>>Amount ↑</option>
@@ -722,13 +819,19 @@ if ($is_super_admin) {
                             <option value="total_desc" <?php echo ($sortBy === 'total' && $sortOrder === 'DESC') ? 'selected' : ''; ?>>Total ↓</option>
                             <option value="total_asc" <?php echo ($sortBy === 'total' && $sortOrder === 'ASC') ? 'selected' : ''; ?>>Total ↑</option>
                         </select>
-                        <?php else: ?>
-                        <select class="sort-select" onchange="sortTable(this.value)">
+                        <select class="sort-select" onchange="sortTable(this.value)" style="display:none;">
                             <option value="">Sort by...</option>
                             <option value="kms_desc" <?php echo ($sortBy === 'kms' && $sortOrder === 'DESC') ? 'selected' : ''; ?>>Distance ↓</option>
                             <option value="kms_asc" <?php echo ($sortBy === 'kms' && $sortOrder === 'ASC') ? 'selected' : ''; ?>>Distance ↑</option>
                         </select>
-                        <?php endif; ?>
+                        <select class="sort-select" onchange="sortTable(this.value)">
+                            <option value="">Sort by...</option>
+                            <?php foreach ($sortOptions as $option): ?>
+                            <option value="<?php echo htmlspecialchars($option['value']); ?>" <?php echo $currentSortValue === $option['value'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($option['label']); ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
                         <div style="position: relative;">
                             <div class="filter-icon" onclick="toggleFilters()">
                                 <i class="fas fa-filter"></i> Filter
@@ -755,10 +858,10 @@ if ($is_super_admin) {
                                             <label><i class="fas fa-car"></i> Vehicle</label>
                                             <input type="text" name="vehicle" placeholder="Search vehicle" value="<?php echo htmlspecialchars($filterVehicle); ?>">
                                         </div>
-                                        <?php if ($viewMode !== 'logbook'): ?>
+                                        <?php if ($viewMode === 'requisitions'): ?>
                                         <div class="filter-group">
-                                            <label><i class="fas fa-dollar-sign"></i> Min Amount (L)</label>
-                                            <input type="number" name="amount" step="0.01" placeholder="Minimum amount" value="<?php echo htmlspecialchars($filterAmount); ?>">
+                                            <label><i class="fas fa-money-bill-wave"></i> Minimum Total (ZMW)</label>
+                                            <input type="number" name="amount" step="0.01" placeholder="Minimum total spend" value="<?php echo htmlspecialchars($filterAmount); ?>">
                                         </div>
                                         <div class="filter-group">
                                             <label><i class="fas fa-info-circle"></i> Status</label>
@@ -821,6 +924,7 @@ if ($is_super_admin) {
                 <?php if (count($entriesToShow) > 0): ?>
                 <?php foreach ($entriesToShow as $entry): 
                         $isLogbook = ($entry['entry_type'] === 'logbook');
+                        $entryDate = $isLogbook ? ($entry['log_date'] ?? null) : ($entry['entry_date'] ?? null);
                 ?>
                     <details class="request-item <?php echo $isLogbook ? 'logbook-item' : ''; ?>">
                         <summary class="request-summary">
@@ -831,7 +935,7 @@ if ($is_super_admin) {
                                     <?php if ($viewMode === 'all'): ?>
                                     <span class="entry-type-badge <?php echo $isLogbook ? 'logbook' : 'requisition'; ?>">
                                         <i class="fas fa-<?php echo $isLogbook ? 'book' : 'gas-pump'; ?>"></i>
-                                        <?php echo $isLogbook ? 'Logbook' : 'Requisition'; ?>
+                                        <?php echo $isLogbook ? 'Logbook' : 'Fuel Liquidation'; ?>
                                     </span>
                                     <?php endif; ?>
                                 </div>
@@ -850,13 +954,17 @@ if ($is_super_admin) {
                             <div class="summary-bottom">
                                 <div class="summary-meta">
                                     <span class="summary-meta-label">
-                                        <i class="fas fa-user"></i> <?php echo $isLogbook ? 'Driver' : 'Requested By'; ?>
+                                        <i class="fas fa-user"></i> Driver
                                     </span>
-                                    <span class="summary-meta-value"><?php echo htmlspecialchars($isLogbook ? ($entry['driver_name'] ?? 'Unknown') : ($entry['staff_name'] ?? 'Unknown')); ?></span>
+                                    <span class="summary-meta-value"><?php echo htmlspecialchars($entry['driver_name'] ?? 'Unknown'); ?></span>
                                 </div>
                                 <div class="summary-meta">
                                     <span class="summary-meta-label"><i class="fas fa-calendar"></i> Date</span>
-                                    <span class="summary-meta-value"><?php echo date('d M Y', strtotime($isLogbook ? $entry['log_date'] : $entry['request_date'])); ?></span>
+                                    <span class="summary-meta-value"><?php echo $entryDate ? htmlspecialchars(date('d M Y', strtotime((string) $entryDate))) : '-'; ?></span>
+                                </div>
+                                <div class="summary-meta">
+                                    <span class="summary-meta-label"><i class="fas fa-location-dot"></i> Province</span>
+                                    <span class="summary-meta-value"><?php echo htmlspecialchars((string) ($entry['province_name'] ?? 'Unassigned Province')); ?></span>
                                 </div>
                             </div>
                         </summary>
@@ -889,28 +997,32 @@ if ($is_super_admin) {
                                 </div>
                             <?php else: ?>
                                 <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-droplet"></i> Amount</span>
-                                    <span class="detail-value highlight"><?php echo number_format($entry['requested_amount'], 2); ?> L</span>
+                                    <span class="detail-label"><i class="fas fa-receipt"></i> Fuel Purchases</span>
+                                    <span class="detail-value highlight"><?php echo number_format((int) ($entry['fuel_purchase_count'] ?? 0)); ?></span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-money-bill-wave"></i> Total Cost</span>
-                                    <span class="detail-value highlight">K <?php echo number_format($entry['total_cost'], 2); ?></span>
+                                    <span class="detail-label"><i class="fas fa-droplet"></i> Total Fuel</span>
+                                    <span class="detail-value highlight"><?php echo number_format((float) ($entry['total_fuel_litres'] ?? 0), 2); ?> L</span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-wallet"></i> Float Account</span>
-                                    <span class="detail-value"><?php echo htmlspecialchars($entry['float_account'] ?? '-'); ?></span>
+                                    <span class="detail-label"><i class="fas fa-money-bill-wave"></i> Total Spend</span>
+                                    <span class="detail-value highlight">K <?php echo number_format((float) ($entry['total_fuel_amount'] ?? 0), 2); ?></span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-tasks"></i> Activity</span>
-                                    <span class="detail-value"><?php echo htmlspecialchars($entry['activity_name'] ?? '-'); ?></span>
+                                    <span class="detail-label"><i class="fas fa-route"></i> Movement Legs</span>
+                                    <span class="detail-value"><?php echo number_format((int) ($entry['total_trip_legs'] ?? 0)); ?> legs · <?php echo number_format((float) ($entry['total_km'] ?? 0), 2); ?> KM</span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-map-marker-alt"></i> Filling Station</span>
-                                    <span class="detail-value"><?php echo htmlspecialchars($entry['filling_station'] ?? '-'); ?></span>
+                                    <span class="detail-label"><i class="fas fa-calendar-week"></i> Reconciliation Window</span>
+                                    <span class="detail-value"><?php echo htmlspecialchars(date('d M Y', strtotime((string) $entry['week_start_date'])) . ' - ' . date('d M Y', strtotime((string) $entry['week_end_date']))); ?></span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label"><i class="fas fa-user-check"></i> Approver</span>
-                                    <span class="detail-value"><?php echo htmlspecialchars($entry['approver_name'] ?? '-'); ?></span>
+                                    <span class="detail-label"><i class="fas fa-user-check"></i> Reviewer</span>
+                                    <span class="detail-value"><?php echo htmlspecialchars($entry['reviewer_name'] ?? '-'); ?></span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label"><i class="fas fa-note-sticky"></i> Notes</span>
+                                    <span class="detail-value"><?php echo htmlspecialchars($entry['return_reason'] ?: ($entry['review_notes'] ?? '-')); ?></span>
                                 </div>
                             <?php endif; ?>
                             </div>
