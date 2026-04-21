@@ -117,15 +117,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selectedVehicle && isset($_POST['v
                 throw new RuntimeException('This reconciliation package still has issues: ' . ($weekly['issue_notes'] ?: 'resolve the flagged items before submitting.'));
             }
 
-            $submitStmt = $pdo->prepare("
-                UPDATE weekly_liquidations
-                SET status = 'submitted',
-                    submitted_at = CURRENT_TIMESTAMP,
-                    submitted_by = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            ");
-            $submitStmt->execute([$user['id'], $weekly['id']]);
+            if (fleet_review_workflow_ready($pdo)) {
+                $submitStmt = $pdo->prepare("
+                    UPDATE weekly_liquidations
+                    SET status = 'submitted',
+                        submission_round = COALESCE(submission_round, 0) + 1,
+                        submitted_at = CURRENT_TIMESTAMP,
+                        submitted_by = ?,
+                        reviewed_by = NULL,
+                        reviewed_at = NULL,
+                        review_notes = NULL,
+                        return_reason = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ");
+                $submitStmt->execute([$user['id'], $weekly['id']]);
+            } else {
+                $submitStmt = $pdo->prepare("
+                    UPDATE weekly_liquidations
+                    SET status = 'submitted',
+                        submitted_at = CURRENT_TIMESTAMP,
+                        submitted_by = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ");
+                $submitStmt->execute([$user['id'], $weekly['id']]);
+            }
 
             if ($selectedTripLegIds) {
                 $lockTripStmt = $pdo->prepare("

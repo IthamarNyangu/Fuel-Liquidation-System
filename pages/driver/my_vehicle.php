@@ -352,7 +352,7 @@ if ($isDriverView) {
     echo '<a class="button-secondary" href="pending_reconciliations.php?vehicle_id=' . urlencode((string) $selectedVehicle['id']) . '&week_start=' . urlencode($weekStart) . '">Pending Reconciliations</a>';
     echo '</div>';
 } else {
-    echo '<p class="helper-text" style="margin-top:10px;">This view is read-only. Use the reconciliation review queue to review submitted activity by province.</p>';
+    echo '<p class="helper-text" style="margin-top:10px;">This view is read-only. Use the reconciliation hub to follow packages through provincial, fleet, and finance review.</p>';
 }
 echo '</div>';
 echo '</section>';

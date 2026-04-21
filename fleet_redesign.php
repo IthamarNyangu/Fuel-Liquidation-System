@@ -25,6 +25,51 @@ function fleet_pdo(): PDO
     return $pdo;
 }
 
+function fleet_table_exists(PDO $pdo, string $tableName): bool
+{
+    static $cache = [];
+    $cacheKey = $tableName;
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = ?
+    ");
+    $stmt->execute([$tableName]);
+
+    return $cache[$cacheKey] = ((int) $stmt->fetchColumn() > 0);
+}
+
+function fleet_column_exists(PDO $pdo, string $tableName, string $columnName): bool
+{
+    static $cache = [];
+    $cacheKey = $tableName . '.' . $columnName;
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = ?
+          AND column_name = ?
+    ");
+    $stmt->execute([$tableName, $columnName]);
+
+    return $cache[$cacheKey] = ((int) $stmt->fetchColumn() > 0);
+}
+
+function fleet_review_workflow_ready(PDO $pdo): bool
+{
+    return fleet_table_exists($pdo, 'reconciliation_reviews')
+        && fleet_column_exists($pdo, 'weekly_liquidations', 'submission_round');
+}
+
 function fleet_h($value): string
 {
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
@@ -277,6 +322,7 @@ function fleet_role_label(string $role, bool $isFacilityAdmin = false): string
 
     return match ($normalizedRole) {
         'fleet_manager' => 'Fleet Manager',
+        'finance' => 'Finance',
         'provincial_admin' => 'Provincial Admin',
         default => 'Driver',
     };
@@ -289,7 +335,7 @@ function fleet_is_driver(array $user): bool
 
 function fleet_is_fleet_overview_user(array $user): bool
 {
-    return in_array($user['role'] ?? '', ['provincial_admin', 'fleet_manager'], true);
+    return in_array($user['role'] ?? '', ['provincial_admin', 'fleet_manager', 'finance'], true);
 }
 
 function fleet_is_driver_flow_user(array $user): bool
@@ -297,9 +343,145 @@ function fleet_is_driver_flow_user(array $user): bool
     return in_array($user['role'], ['driver', 'provincial_admin', 'fleet_manager'], true);
 }
 
+function fleet_is_finance(array $user): bool
+{
+    return ($user['role'] ?? '') === 'finance';
+}
+
 function fleet_is_reviewer(array $user): bool
 {
-    return in_array($user['role'], ['provincial_admin', 'fleet_manager'], true);
+    return in_array($user['role'], ['provincial_admin', 'fleet_manager', 'finance'], true);
+}
+
+function fleet_has_global_review_scope(array $user): bool
+{
+    return in_array($user['role'] ?? '', ['fleet_manager', 'finance'], true);
+}
+
+function fleet_review_role_sequence(): array
+{
+    return ['provincial_admin', 'fleet_manager', 'finance'];
+}
+
+function fleet_review_role_action_label(string $role): string
+{
+    return match ($role) {
+        'provincial_admin' => 'Provincial Admin Check',
+        'fleet_manager' => 'Fleet Manager Check',
+        'finance' => 'Finance Approval',
+        default => 'Review',
+    };
+}
+
+function fleet_review_action_display_label(string $action): string
+{
+    return match ($action) {
+        'checked' => 'Checked',
+        'approved' => 'Approved',
+        'returned' => 'Returned',
+        default => ucwords(str_replace('_', ' ', $action)),
+    };
+}
+
+function fleet_current_submission_round(array $weekly): int
+{
+    return max(0, (int) ($weekly['submission_round'] ?? 0));
+}
+
+function fleet_fetch_reconciliation_reviews(PDO $pdo, int $weeklyId, int $submissionRound): array
+{
+    if (!fleet_review_workflow_ready($pdo) || $submissionRound <= 0) {
+        return [];
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT
+            rr.*,
+            COALESCE(rr.reviewer_name, u.name, 'Unknown') AS reviewer_name_display,
+            COALESCE(rr.reviewer_email, u.email, '') AS reviewer_email_display
+        FROM reconciliation_reviews rr
+        LEFT JOIN users u
+            ON u.id = rr.reviewed_by
+        WHERE rr.weekly_liquidation_id = ?
+          AND rr.submission_round = ?
+        ORDER BY rr.reviewed_at ASC, rr.id ASC
+    ");
+    $stmt->execute([$weeklyId, $submissionRound]);
+
+    return $stmt->fetchAll();
+}
+
+function fleet_record_reconciliation_review(PDO $pdo, int $weeklyId, int $submissionRound, array $user, string $action, ?string $notes = null): void
+{
+    if (!fleet_review_workflow_ready($pdo)) {
+        throw new RuntimeException('The staged review workflow is not ready yet. Run the workflow migration first.');
+    }
+
+    $stmt = $pdo->prepare("
+        INSERT INTO reconciliation_reviews (
+            weekly_liquidation_id,
+            submission_round,
+            review_role,
+            review_action,
+            reviewed_by,
+            reviewer_name,
+            reviewer_email,
+            review_notes,
+            reviewed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ");
+    $stmt->execute([
+        $weeklyId,
+        $submissionRound,
+        $user['role'],
+        $action,
+        $user['id'],
+        $user['name'],
+        $user['email'],
+        $notes ?: null,
+    ]);
+}
+
+function fleet_resolve_reconciliation_stage(array $weekly, array $reviews): array
+{
+    $latestByRole = [];
+    foreach ($reviews as $review) {
+        $latestByRole[$review['review_role']] = $review;
+    }
+
+    $status = (string) ($weekly['status'] ?? 'draft');
+    $stage = [
+        'status' => $status,
+        'current_round' => fleet_current_submission_round($weekly),
+        'latest_by_role' => $latestByRole,
+        'next_role' => null,
+        'can_progress' => in_array($status, ['submitted', 'under_review'], true),
+        'stage_label' => '',
+    ];
+
+    if ($status === 'approved') {
+        $stage['stage_label'] = 'Approved by Finance';
+        return $stage;
+    }
+
+    if ($status === 'returned') {
+        $stage['stage_label'] = 'Returned to Driver';
+        return $stage;
+    }
+
+    foreach (fleet_review_role_sequence() as $role) {
+        $review = $latestByRole[$role] ?? null;
+        if (($review['review_action'] ?? '') !== 'checked') {
+            $stage['next_role'] = $role;
+            $stage['stage_label'] = 'Waiting for ' . fleet_review_role_action_label($role);
+            return $stage;
+        }
+    }
+
+    $stage['next_role'] = 'finance';
+    $stage['stage_label'] = 'Waiting for Finance Approval';
+
+    return $stage;
 }
 
 function fleet_require_vehicle_hub_access(array $user): void
@@ -997,12 +1179,22 @@ function fleet_render_shell_start(string $title, string $activeNav, array $user,
             ['key' => 'pending_reconciliations', 'href' => 'pending_reconciliations.php', 'icon' => 'fa-clipboard-check', 'label' => 'Pending Reconciliations'],
         ];
     } else {
-        $brandTitle = $user['role'] === 'fleet_manager' ? 'Fleet Hub' : 'Province Hub';
+        $brandTitle = match ($user['role']) {
+            'fleet_manager' => 'Fleet Hub',
+            'finance' => 'Finance Hub',
+            default => 'Province Hub',
+        };
         $myVehicleLabel = 'My Fleet';
-        $navItems[] = ['key' => 'my_vehicle', 'href' => 'my_vehicle.php', 'icon' => 'fa-car-side', 'label' => $myVehicleLabel];
+        if (fleet_is_finance($user)) {
+            $navItems[] = ['key' => 'dashboard', 'href' => 'dashboard.php', 'icon' => 'fa-home', 'label' => 'Dashboard'];
+            $navItems[] = ['key' => 'province_liquidation', 'href' => 'finance_hub.php', 'icon' => 'fa-user-check', 'label' => 'Reconciliation History'];
+        }
+        if (!fleet_is_finance($user)) {
+            $navItems[] = ['key' => 'my_vehicle', 'href' => 'my_vehicle.php', 'icon' => 'fa-car-side', 'label' => $myVehicleLabel];
+        }
     }
 
-    if (fleet_is_reviewer($user)) {
+    if (fleet_is_reviewer($user) && !fleet_is_finance($user)) {
         $navItems[] = [
             'key' => 'province_liquidation',
             'href' => 'province_liquidation.php',
@@ -1051,7 +1243,7 @@ function fleet_render_shell_start(string $title, string $activeNav, array $user,
     }
     echo '</nav>';
     echo '<div class="workflow-sidebar-footer">';
-    if (!fleet_is_driver($user)) {
+    if (!fleet_is_driver($user) && !fleet_is_finance($user)) {
         echo '<a class="workflow-nav-link subtle" href="dashboard.php" title="Back to Dashboard"><i class="fas fa-arrow-left"></i><span>Back to Dashboard</span></a>';
     }
     echo '<a class="workflow-nav-link subtle" href="logout.php" title="Logout"><i class="fas fa-sign-out-alt"></i><span>Logout</span></a>';

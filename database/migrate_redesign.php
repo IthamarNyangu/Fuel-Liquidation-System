@@ -46,6 +46,29 @@ function addColumnIfMissing(PDO $pdo, string $tableName, string $columnName, str
     line("Added column {$tableName}.{$columnName}");
 }
 
+function ensureUsersRoleEnumIncludesFinance(PDO $pdo): void
+{
+    if (!columnExists($pdo, 'users', 'role')) {
+        return;
+    }
+
+    $columnStmt = $pdo->query("SHOW COLUMNS FROM users LIKE 'role'");
+    $column = $columnStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    $columnType = strtolower((string) ($column['Type'] ?? ''));
+
+    if (str_contains($columnType, "'finance'")) {
+        line('Ready users.role enum includes finance');
+        return;
+    }
+
+    $pdo->exec("
+        ALTER TABLE users
+        MODIFY COLUMN role ENUM('super_admin', 'facility_admin', 'admin', 'approver', 'staff', 'finance')
+        NULL DEFAULT 'staff'
+    ");
+    line('Updated users.role enum to include finance');
+}
+
 function createTable(PDO $pdo, string $tableName, string $sql): void
 {
     $pdo->exec($sql);
@@ -77,6 +100,7 @@ try {
     ");
     foreach ([
         ['driver', 'Driver', 'Records movement legs, fuel purchases, and submits weekly liquidation'],
+        ['finance', 'Finance', 'Gives the final finance approval after provincial and fleet checks'],
         ['facility_admin', 'Facility Admin', 'Reviews weekly liquidations for the assigned facility'],
         ['admin', 'Admin', 'Manages fleet operations and organisation-wide oversight'],
         ['super_admin', 'Super Admin', 'Global system administration'],
@@ -85,10 +109,21 @@ try {
     }
     line('Seeded roles');
 
+    ensureUsersRoleEnumIncludesFinance($pdo);
+
     addColumnIfMissing($pdo, 'users', 'role_id', "INT NULL AFTER role");
     addColumnIfMissing($pdo, 'users', 'phone', "VARCHAR(50) NULL AFTER email");
     addColumnIfMissing($pdo, 'users', 'user_status', "ENUM('active', 'inactive') NOT NULL DEFAULT 'active' AFTER password");
     addColumnIfMissing($pdo, 'users', 'updated_at', "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at");
+
+    $fixedBlankFinanceRoles = $pdo->exec("
+        UPDATE users
+        SET role = 'finance',
+            is_super_admin = 0,
+            is_facility_admin = 0
+        WHERE role = ''
+    ");
+    line('Repaired ' . $fixedBlankFinanceRoles . ' blank finance role row(s)');
 
     addColumnIfMissing($pdo, 'facilities', 'province_name', "VARCHAR(100) NULL AFTER location");
     addColumnIfMissing($pdo, 'facilities', 'facility_type', "ENUM('facility', 'hq') NOT NULL DEFAULT 'facility' AFTER facility_code");
@@ -346,6 +381,7 @@ try {
                 ON UPDATE CASCADE ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+    addColumnIfMissing($pdo, 'weekly_liquidations', 'submission_round', "INT NOT NULL DEFAULT 0 AFTER status");
 
     createTable($pdo, 'weekly_liquidation_items', "
         CREATE TABLE IF NOT EXISTS weekly_liquidation_items (
@@ -368,6 +404,30 @@ try {
             CONSTRAINT fk_weekly_items_fuel_purchase
                 FOREIGN KEY (fuel_purchase_id) REFERENCES fuel_purchases(id)
                 ON UPDATE CASCADE ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    createTable($pdo, 'reconciliation_reviews', "
+        CREATE TABLE IF NOT EXISTS reconciliation_reviews (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            weekly_liquidation_id INT NOT NULL,
+            submission_round INT NOT NULL DEFAULT 1,
+            review_role VARCHAR(50) NOT NULL,
+            review_action ENUM('checked', 'returned', 'approved') NOT NULL,
+            reviewed_by INT NULL,
+            reviewer_name VARCHAR(255) NULL,
+            reviewer_email VARCHAR(255) NULL,
+            review_notes TEXT NULL,
+            reviewed_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_reconciliation_reviews_package_round (weekly_liquidation_id, submission_round),
+            KEY idx_reconciliation_reviews_role_action (review_role, review_action),
+            KEY idx_reconciliation_reviews_reviewer (reviewed_by),
+            CONSTRAINT fk_reconciliation_reviews_weekly_liquidation
+                FOREIGN KEY (weekly_liquidation_id) REFERENCES weekly_liquidations(id)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT fk_reconciliation_reviews_reviewed_by
+                FOREIGN KEY (reviewed_by) REFERENCES users(id)
+                ON UPDATE CASCADE ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 

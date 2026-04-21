@@ -14,15 +14,16 @@ function legacyRoleFromSession(): string
 
 function normalizeRole(?string $role = null): string
 {
+    $useSessionFallback = $role === null;
     $role = strtolower(trim((string) ($role ?? legacyRoleFromSession())));
     $sessionIsSuper = !empty($_SESSION['is_super_admin']);
     $sessionIsFacilityAdmin = !empty($_SESSION['is_facility_admin']);
 
-    if ($role === '' && $sessionIsSuper) {
+    if ($role === '' && $useSessionFallback && $sessionIsSuper) {
         return 'fleet_manager';
     }
 
-    if ($role === '' && $sessionIsFacilityAdmin) {
+    if ($role === '' && $useSessionFallback && $sessionIsFacilityAdmin) {
         return 'provincial_admin';
     }
 
@@ -30,6 +31,8 @@ function normalizeRole(?string $role = null): string
         case 'fleet_manager':
         case 'super_admin':
             return 'fleet_manager';
+        case 'finance':
+            return 'finance';
         case 'provincial_admin':
         case 'facility_admin':
         case 'admin':
@@ -39,11 +42,11 @@ function normalizeRole(?string $role = null): string
         case 'staff':
             return 'driver';
         default:
-            if ($sessionIsSuper) {
+            if ($useSessionFallback && $sessionIsSuper) {
                 return 'fleet_manager';
             }
 
-            if ($sessionIsFacilityAdmin) {
+            if ($useSessionFallback && $sessionIsFacilityAdmin) {
                 return 'provincial_admin';
             }
 
@@ -56,6 +59,8 @@ function rawRoleFromBusinessRole(string $role): string
     switch (normalizeRole($role)) {
         case 'fleet_manager':
             return 'super_admin';
+        case 'finance':
+            return 'finance';
         case 'provincial_admin':
             return 'admin';
         case 'driver':
@@ -79,6 +84,11 @@ function isProvincialAdmin(): bool
     return getCurrentRole() === 'provincial_admin';
 }
 
+function isFinance(): bool
+{
+    return getCurrentRole() === 'finance';
+}
+
 function isDriver(): bool
 {
     return getCurrentRole() === 'driver';
@@ -98,7 +108,7 @@ function isStaff() {
 }
 
 function getUserProvinceId() {
-    if (isFleetManager()) {
+    if (isFleetManager() || isFinance()) {
         return null;
     }
 
@@ -156,6 +166,8 @@ function getRoleDisplayName() {
     switch (getCurrentRole()) {
         case 'fleet_manager':
             return 'Fleet Manager';
+        case 'finance':
+            return 'Finance';
         case 'provincial_admin':
             return 'Provincial Admin';
         case 'driver':
@@ -200,7 +212,7 @@ function canCreateAccounts(): bool
 
 function canReviewReconciliations(): bool
 {
-    return isFleetManager() || isProvincialAdmin();
+    return isFleetManager() || isProvincialAdmin() || isFinance();
 }
 
 function provinceLabelSingular(): string

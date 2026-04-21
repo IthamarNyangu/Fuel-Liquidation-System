@@ -4,6 +4,21 @@ require_once __DIR__ . '/../../db_connect.php';
 
 $errors = [];
 
+function resolveLoginRole(array $user): string
+{
+    $role = strtolower(trim((string) ($user['role'] ?? '')));
+
+    return match (true) {
+        $role === 'finance' => 'finance',
+        $role === 'fleet_manager',
+        $role === 'super_admin',
+        !empty($user['is_super_admin']) => 'fleet_manager',
+        in_array($role, ['provincial_admin', 'facility_admin', 'admin', 'approver'], true),
+        !empty($user['is_facility_admin']) => 'provincial_admin',
+        default => 'driver',
+    };
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Sanitize inputs
     $username = trim($_POST['username']);
@@ -47,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $_SESSION['logged_in'] = true;
                 $_SESSION['last_activity'] = time();
                 
-                $normalizedRole = strtolower((string) ($user['role'] ?? ''));
+                $normalizedRole = resolveLoginRole($user);
                 $redirectTarget = $normalizedRole === 'driver' ? 'my_vehicle.php' : 'dashboard.php';
 
                 header("Location: " . $redirectTarget);

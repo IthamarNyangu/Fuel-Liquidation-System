@@ -4,7 +4,8 @@ $appRoot = dirname(__DIR__, 2);
 
 // Check if user is already logged in
 if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
-    $loggedInRole = strtolower((string) ($_SESSION['user_role'] ?? ''));
+    require_once $appRoot . '/facility_auth.php';
+    $loggedInRole = getCurrentRole();
     header("Location: " . ($loggedInRole === 'driver' ? 'my_vehicle.php' : 'dashboard.php'));
     exit();
 }

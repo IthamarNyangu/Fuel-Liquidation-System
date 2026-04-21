@@ -40,8 +40,13 @@ $messageType = '';
 $DEFAULT_PASSWORD = 'Password123!';
 
 function users_role_label(string $role): string {
+    if (trim($role) === '') {
+        return 'No Role';
+    }
+
     return match (normalizeRole($role)) {
         'fleet_manager' => 'Fleet Manager',
+        'finance' => 'Finance',
         'provincial_admin' => 'Provincial Admin',
         default => 'Driver',
     };
@@ -50,6 +55,7 @@ function users_role_label(string $role): string {
 function users_role_options(bool $isSuperAdmin): array {
     return [
         'super_admin' => 'Fleet Manager',
+        'finance' => 'Finance',
         'admin' => 'Provincial Admin',
         'staff' => 'Driver',
     ];
@@ -104,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
         // Hash password
         $hashedPassword = password_hash($new_password, PASSWORD_DEFAULT);
         
-        $storedRole = in_array($role, ['super_admin', 'admin', 'staff'], true) ? $role : rawRoleFromBusinessRole($role);
+        $storedRole = in_array($role, ['super_admin', 'admin', 'staff', 'finance'], true) ? $role : rawRoleFromBusinessRole($role);
         $is_facility_admin = normalizeRole($storedRole) === 'provincial_admin' ? 1 : 0;
         $is_super = normalizeRole($storedRole) === 'fleet_manager' ? 1 : 0;
         
@@ -160,7 +166,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_user'])) {
             throw new Exception('Email address already exists');
         }
         
-        $storedRole = in_array($role, ['super_admin', 'admin', 'staff'], true) ? $role : rawRoleFromBusinessRole($role);
+        $storedRole = in_array($role, ['super_admin', 'admin', 'staff', 'finance'], true) ? $role : rawRoleFromBusinessRole($role);
         $is_facility_admin = normalizeRole($storedRole) === 'provincial_admin' ? 1 : 0;
         $is_super = normalizeRole($storedRole) === 'fleet_manager' ? 1 : 0;
         
@@ -1390,6 +1396,7 @@ $has_active_filters = ($search !== '' || $role_filter !== '' || $facility_filter
     <script>
         const facilityRequirementText = {
             super_admin: 'No province is required for a Fleet Manager account.',
+            finance: 'No province is required for a Finance account.',
             admin: 'Province is required for Provincial Admin accounts.',
             facility_admin: 'Province is required for Provincial Admin accounts.',
             staff: 'Province is required for Driver accounts.'
@@ -1430,11 +1437,18 @@ $has_active_filters = ($search !== '' || $role_filter !== '' || $facility_filter
             document.getElementById('addModal').classList.remove('active');
         }
 
-        function openEditModal(user) {
+function openEditModal(user) {
+            const normalizedRoleMap = {
+                fleet_manager: 'super_admin',
+                provincial_admin: 'admin',
+                driver: 'staff',
+                facility_admin: 'admin'
+            };
+
             document.getElementById('edit_user_id').value = user.id;
             document.getElementById('edit_name').value = user.name;
             document.getElementById('edit_email').value = user.email;
-            document.getElementById('edit_role').value = user.role === 'facility_admin' ? 'admin' : user.role;
+            document.getElementById('edit_role').value = normalizedRoleMap[user.role] || user.role || '';
             document.getElementById('edit_facility_id').value = user.facility_id || '';
             document.getElementById('editModal').classList.add('active');
             syncFacilityRequirement('edit');

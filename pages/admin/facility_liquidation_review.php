@@ -6,26 +6,39 @@ require_once $appRoot . '/fleet_redesign.php';
 $pdo = fleet_pdo();
 $user = fleet_current_user_context();
 fleet_require_reviewer_access($user);
-$selfPath = basename((string) ($_SERVER['PHP_SELF'] ?? 'facility_liquidation_review.php'));
-$selectedProvinceId = $user['is_super_admin'] ? max(0, (int) ($_GET['province_id'] ?? 0)) : (int) ($user['facility_id'] ?? 0);
-$provinceFilterQuery = $selectedProvinceId > 0 ? '&province_id=' . urlencode((string) $selectedProvinceId) : '';
 
-if (!fleet_schema_ready($pdo)) {
-    fleet_render_schema_required($user, 'Reconciliation Review', 'province_liquidation');
+$selfPath = basename((string) ($_SERVER['PHP_SELF'] ?? 'province_liquidation.php'));
+$isFinanceReviewer = fleet_is_finance($user);
+$hasGlobalScope = fleet_has_global_review_scope($user);
+$selectedProvinceId = $hasGlobalScope ? max(0, (int) ($_GET['province_id'] ?? 0)) : (int) ($user['facility_id'] ?? 0);
+$provinceFilterQuery = $selectedProvinceId > 0 ? '&province_id=' . urlencode((string) $selectedProvinceId) : '';
+$pageTitle = match ($user['role']) {
+    'finance' => 'Reconciliation History',
+    'fleet_manager' => 'Fleet Review',
+    default => 'Province Review',
+};
+$queueHeading = match ($user['role']) {
+    'finance' => 'Finance Reconciliation History',
+    'fleet_manager' => 'Fleet Queue',
+    default => 'Province Reconciliation Queue',
+};
+
+if (!fleet_review_workflow_ready($pdo)) {
+    fleet_render_schema_required($user, $pageTitle, 'province_liquidation');
 }
 
 $scopeSql = '';
 $scopeParams = [];
-if (!$user['is_super_admin']) {
+if (!$hasGlobalScope) {
     $scopeSql = ' AND wl.facility_id = :facility_id';
-    $scopeParams[':facility_id'] = $user['facility_id'];
+    $scopeParams[':facility_id'] = (int) ($user['facility_id'] ?? 0);
 } elseif ($selectedProvinceId > 0) {
     $scopeSql = ' AND wl.facility_id = :facility_id';
     $scopeParams[':facility_id'] = $selectedProvinceId;
 }
 
 $provinceOptions = [];
-if ($user['is_super_admin']) {
+if ($hasGlobalScope) {
     $provinceStmt = $pdo->query("
         SELECT id, facility_name
         FROM facilities
@@ -37,34 +50,70 @@ if ($user['is_super_admin']) {
 
 $pageError = '';
 
+$loadWeeklyInScope = static function (int $weeklyId) use ($pdo, $scopeSql, $scopeParams): ?array {
+    $detailSql = "
+        SELECT
+            wl.*,
+            u.name AS driver_name,
+            u.email AS driver_email,
+            v.vehicle_name,
+            v.number_plate,
+            f.facility_name
+        FROM weekly_liquidations wl
+        JOIN users u
+            ON u.id = wl.driver_id
+        JOIN vehicles v
+            ON v.id = wl.vehicle_id
+        LEFT JOIN facilities f
+            ON f.id = wl.facility_id
+        WHERE wl.id = :weekly_id" . $scopeSql . "
+        LIMIT 1
+    ";
+    $detailStmt = $pdo->prepare($detailSql);
+    $detailParams = array_merge([':weekly_id' => $weeklyId], $scopeParams);
+    $detailStmt->execute($detailParams);
+    $weekly = $detailStmt->fetch() ?: null;
+
+    if (!$weekly) {
+        return null;
+    }
+
+    $weekly = array_merge($weekly, fleet_recalculate_weekly($pdo, (int) $weekly['id']));
+    $weekly['submission_round'] = fleet_current_submission_round($weekly);
+    $weekly['workflow_reviews'] = fleet_fetch_reconciliation_reviews($pdo, (int) $weekly['id'], (int) $weekly['submission_round']);
+    $weekly['workflow_stage'] = fleet_resolve_reconciliation_stage($weekly, $weekly['workflow_reviews']);
+
+    return $weekly;
+};
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['weekly_liquidation_id'], $_POST['review_action'])) {
     $weeklyId = (int) $_POST['weekly_liquidation_id'];
-    $reviewAction = $_POST['review_action'];
+    $reviewAction = trim((string) ($_POST['review_action'] ?? ''));
     $reviewNotes = trim((string) ($_POST['review_notes'] ?? ''));
+    $reviewConfirmed = !empty($_POST['review_confirmed']);
 
     try {
-        $detailSql = "
-            SELECT wl.*, u.name AS driver_name, v.vehicle_name, v.number_plate, f.facility_name
-            FROM weekly_liquidations wl
-            JOIN users u ON u.id = wl.driver_id
-            JOIN vehicles v ON v.id = wl.vehicle_id
-            LEFT JOIN facilities f ON f.id = wl.facility_id
-            WHERE wl.id = :weekly_id" . $scopeSql . "
-            LIMIT 1
-        ";
-        $detailStmt = $pdo->prepare($detailSql);
-        $detailParams = array_merge([':weekly_id' => $weeklyId], $scopeParams);
-        $detailStmt->execute($detailParams);
-        $weekly = $detailStmt->fetch();
-
+        $weekly = $loadWeeklyInScope($weeklyId);
         if (!$weekly) {
             throw new RuntimeException('The selected reconciliation package could not be found in your review scope.');
         }
 
-        $weekly = array_merge($weekly, fleet_recalculate_weekly($pdo, (int) $weekly['id']));
+        $workflowStage = $weekly['workflow_stage'];
+        $canActNow = $workflowStage['can_progress'] && ($workflowStage['next_role'] === ($user['role'] ?? ''));
+        if (!$canActNow) {
+            throw new RuntimeException('This reconciliation package is not waiting for your review stage.');
+        }
 
-        if (!in_array($weekly['status'], ['submitted', 'under_review'], true)) {
-            throw new RuntimeException('Only submitted reconciliation packages can be approved or returned.');
+        if (in_array($reviewAction, ['checked', 'approve'], true) && !$reviewConfirmed) {
+            throw new RuntimeException('Tick the confirmation box before continuing.');
+        }
+
+        if ($reviewAction === 'checked' && !in_array($user['role'], ['provincial_admin', 'fleet_manager'], true)) {
+            throw new RuntimeException('Only Provincial Admin and Fleet Manager can mark a package as checked.');
+        }
+
+        if ($reviewAction === 'approve' && !$isFinanceReviewer) {
+            throw new RuntimeException('Only Finance can give the final approval.');
         }
 
         if ($reviewAction === 'return' && $reviewNotes === '') {
@@ -73,7 +122,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['weekly_liquidation_id
 
         $pdo->beginTransaction();
 
-        if ($reviewAction === 'approve') {
+        if ($reviewAction === 'checked') {
+            fleet_record_reconciliation_review(
+                $pdo,
+                (int) $weekly['id'],
+                (int) $weekly['submission_round'],
+                $user,
+                'checked',
+                $reviewNotes
+            );
+
+            $actionStmt = $pdo->prepare("
+                UPDATE weekly_liquidations
+                SET status = 'under_review',
+                    reviewed_by = ?,
+                    reviewed_at = CURRENT_TIMESTAMP,
+                    review_notes = ?,
+                    return_reason = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ");
+            $actionStmt->execute([
+                $user['id'],
+                $reviewNotes !== '' ? $reviewNotes : null,
+                $weeklyId,
+            ]);
+        } elseif ($reviewAction === 'approve') {
+            fleet_record_reconciliation_review(
+                $pdo,
+                (int) $weekly['id'],
+                (int) $weekly['submission_round'],
+                $user,
+                'approved',
+                $reviewNotes
+            );
+
             $actionStmt = $pdo->prepare("
                 UPDATE weekly_liquidations
                 SET status = 'approved',
@@ -86,10 +169,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['weekly_liquidation_id
             ");
             $actionStmt->execute([
                 $user['id'],
-                $reviewNotes ?: null,
+                $reviewNotes !== '' ? $reviewNotes : null,
                 $weeklyId,
             ]);
         } elseif ($reviewAction === 'return') {
+            fleet_record_reconciliation_review(
+                $pdo,
+                (int) $weekly['id'],
+                (int) $weekly['submission_round'],
+                $user,
+                'returned',
+                $reviewNotes
+            );
+
             $actionStmt = $pdo->prepare("
                 UPDATE weekly_liquidations
                 SET status = 'returned',
@@ -136,12 +228,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['weekly_liquidation_id
 
         $pdo->commit();
 
-        fleet_set_flash(
-            'success',
-            $reviewAction === 'approve'
-                ? 'Vehicle reconciliation approved.'
-                : 'Vehicle reconciliation returned to the driver for correction.'
-        );
+        $successMessage = match ($reviewAction) {
+            'checked' => $user['role'] === 'provincial_admin'
+                ? 'Province check saved and sent to Fleet Manager.'
+                : 'Fleet check saved and sent to Finance.',
+            'approve' => 'Finance approved the reconciliation package.',
+            'return' => 'Reconciliation package returned to the driver for correction.',
+            default => 'Review saved.',
+        };
+        fleet_set_flash('success', $successMessage);
         header('Location: ' . $selfPath . '?weekly_id=' . urlencode((string) $weeklyId) . $provinceFilterQuery);
         exit();
     } catch (Throwable $e) {
@@ -154,73 +249,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['weekly_liquidation_id
 
 $queueSql = "
     SELECT
-        wl.*,
+        wl.id,
+        wl.driver_id,
+        wl.vehicle_id,
+        wl.facility_id,
+        wl.week_start_date,
+        wl.status,
+        wl.submission_round,
+        wl.total_trip_legs,
+        wl.total_fuel_amount,
         u.name AS driver_name,
+        u.email AS driver_email,
         v.vehicle_name,
         v.number_plate,
         f.facility_name
     FROM weekly_liquidations wl
-    JOIN users u ON u.id = wl.driver_id
-    JOIN vehicles v ON v.id = wl.vehicle_id
-    LEFT JOIN facilities f ON f.id = wl.facility_id
+    JOIN users u
+        ON u.id = wl.driver_id
+    JOIN vehicles v
+        ON v.id = wl.vehicle_id
+    LEFT JOIN facilities f
+        ON f.id = wl.facility_id
     WHERE wl.status IN ('submitted', 'under_review', 'returned', 'approved')" . $scopeSql . "
-    ORDER BY
-        FIELD(wl.status, 'submitted', 'under_review', 'returned', 'approved'),
-        wl.week_start_date DESC,
-        wl.id DESC
+    ORDER BY wl.week_start_date DESC, wl.id DESC
 ";
 $queueStmt = $pdo->prepare($queueSql);
 $queueStmt->execute($scopeParams);
-$queue = $queueStmt->fetchAll();
+$queueCandidates = $queueStmt->fetchAll();
+
+$queue = [];
+foreach ($queueCandidates as $weeklyItem) {
+    $weeklyItem['submission_round'] = fleet_current_submission_round($weeklyItem);
+    $reviews = fleet_fetch_reconciliation_reviews($pdo, (int) $weeklyItem['id'], (int) $weeklyItem['submission_round']);
+    $stage = fleet_resolve_reconciliation_stage($weeklyItem, $reviews);
+    $weeklyItem['workflow_stage'] = $stage;
+    $weeklyItem['workflow_reviews'] = $reviews;
+
+    $isFinalHistory = in_array($weeklyItem['status'], ['approved', 'returned'], true);
+    $isWaitingForCurrentRole = $stage['next_role'] === ($user['role'] ?? '');
+    if ($isWaitingForCurrentRole || $isFinalHistory) {
+        $queue[] = $weeklyItem;
+    }
+}
+
+usort($queue, static function (array $left, array $right) use ($user): int {
+    $leftActive = (($left['workflow_stage']['next_role'] ?? null) === ($user['role'] ?? '')) ? 0 : 1;
+    $rightActive = (($right['workflow_stage']['next_role'] ?? null) === ($user['role'] ?? '')) ? 0 : 1;
+    if ($leftActive !== $rightActive) {
+        return $leftActive <=> $rightActive;
+    }
+
+    return strtotime((string) $right['week_start_date']) <=> strtotime((string) $left['week_start_date']);
+});
 
 $selectedWeeklyId = isset($_GET['weekly_id']) ? (int) $_GET['weekly_id'] : 0;
 if ($selectedWeeklyId === 0 && $queue) {
     $selectedWeeklyId = (int) $queue[0]['id'];
 }
 
-$selectedWeekly = null;
+$selectedWeekly = $selectedWeeklyId > 0 ? $loadWeeklyInScope($selectedWeeklyId) : null;
 $selectedTripLegs = [];
 $selectedFuelPurchases = [];
-if ($selectedWeeklyId > 0) {
-    $detailSql = "
-        SELECT
-            wl.*,
-            u.name AS driver_name,
-            v.vehicle_name,
-            v.number_plate,
-            f.facility_name
-        FROM weekly_liquidations wl
-        JOIN users u ON u.id = wl.driver_id
-        JOIN vehicles v ON v.id = wl.vehicle_id
-        LEFT JOIN facilities f ON f.id = wl.facility_id
-        WHERE wl.id = :weekly_id" . $scopeSql . "
-        LIMIT 1
-    ";
-    $detailStmt = $pdo->prepare($detailSql);
-    $detailParams = array_merge([':weekly_id' => $selectedWeeklyId], $scopeParams);
-    $detailStmt->execute($detailParams);
-    $selectedWeekly = $detailStmt->fetch() ?: null;
-
-    if ($selectedWeekly) {
-        $selectedWeekly = array_merge($selectedWeekly, fleet_recalculate_weekly($pdo, (int) $selectedWeekly['id']));
-        $selectedTripLegs = fleet_fetch_weekly_trip_legs($pdo, (int) $selectedWeekly['id']);
-        $selectedFuelPurchases = fleet_fetch_weekly_fuel_purchases($pdo, (int) $selectedWeekly['id']);
-    }
+if ($selectedWeekly) {
+    $selectedTripLegs = fleet_fetch_weekly_trip_legs($pdo, (int) $selectedWeekly['id']);
+    $selectedFuelPurchases = fleet_fetch_weekly_fuel_purchases($pdo, (int) $selectedWeekly['id']);
 }
 
-fleet_render_shell_start(
-    'Reconciliation Review',
-    'province_liquidation',
-    $user,
-    ''
-);
+$selectedStage = $selectedWeekly['workflow_stage'] ?? null;
+$selectedReviews = $selectedWeekly['workflow_reviews'] ?? [];
+$canReviewNow = $selectedStage && ($selectedStage['can_progress'] ?? false) && (($selectedStage['next_role'] ?? null) === ($user['role'] ?? ''));
+$progressButtonLabel = match ($user['role']) {
+    'provincial_admin' => 'Mark Checked',
+    'fleet_manager' => 'Send to Finance',
+    'finance' => 'Approve Reconciliation',
+    default => 'Save Review',
+};
+$progressActionValue = $user['role'] === 'finance' ? 'approve' : 'checked';
+$confirmationLabel = match ($user['role']) {
+    'provincial_admin' => 'I have checked this package and it is ready for Fleet Manager review.',
+    'fleet_manager' => 'I have checked this package and it is ready for Finance review.',
+    'finance' => 'I have checked this package and approve it for final finance clearance.',
+    default => 'I have reviewed this package.',
+};
+$workflowSubtitle = $isFinanceReviewer
+    ? 'Finance can see packages after Provincial Admin and Fleet Manager checks, then give the final approval.'
+    : 'Review follows a staged workflow: Provincial Admin first, then Fleet Manager, then Finance.';
+
+ob_start();
 
 if ($pageError !== '') {
     echo '<div class="alert alert-error"><i class="fas fa-circle-exclamation"></i><span>' . fleet_h($pageError) . '</span></div>';
 }
 
 echo '<section class="panel">';
-echo '<div class="panel-header"><div><h2>Province Reconciliation Queue</h2></div></div>';
+echo '<div class="panel-header"><div><h2>' . fleet_h($queueHeading) . '</h2></div></div>';
 if ($provinceOptions) {
     echo '<div class="vehicle-switcher" style="margin-bottom:18px;">';
     echo '<a class="vehicle-pill' . ($selectedProvinceId === 0 ? ' active' : '') . '" href="' . fleet_h($selfPath) . '"><span>All Provinces</span></a>';
@@ -236,18 +358,19 @@ if (!$queue) {
     echo '<div class="empty-state">';
     echo '<div class="empty-state-icon"><i class="fas fa-user-check"></i></div>';
     echo '<h3>No reconciliation packages waiting</h3>';
-    echo '<p>When drivers submit vehicle reconciliations, they will appear here for province-level review.</p>';
+    echo '<p>' . fleet_h($isFinanceReviewer ? 'When Fleet Manager completes a review, the package will arrive here for final finance approval.' : 'When a reconciliation package reaches your review stage, it will appear here.') . '</p>';
     echo '</div>';
 } else {
     foreach ($queue as $weeklyItem) {
         $isActive = (int) $weeklyItem['id'] === (int) $selectedWeeklyId;
+        $stageLabel = (string) ($weeklyItem['workflow_stage']['stage_label'] ?? ucwords(str_replace('_', ' ', (string) $weeklyItem['status'])));
         echo '<a class="queue-item' . ($isActive ? ' active' : '') . '" href="' . fleet_h($selfPath) . '?weekly_id=' . urlencode((string) $weeklyItem['id']) . $provinceFilterQuery . '">';
         echo '<h3>' . fleet_h($weeklyItem['driver_name']) . ' · ' . fleet_h($weeklyItem['number_plate']) . '</h3>';
         echo '<p>' . fleet_h($weeklyItem['vehicle_name']) . ' · ' . fleet_h($weeklyItem['facility_name'] ?? 'Province not set') . '</p>';
-        echo '<p>' . fleet_h(fleet_format_week_label($weeklyItem['week_start_date'])) . '</p>';
+        echo '<p>' . fleet_h(fleet_format_week_label($weeklyItem['week_start_date'])) . ' · Round ' . fleet_h((string) max(1, (int) $weeklyItem['submission_round'])) . '</p>';
         echo '<div class="queue-meta">';
         echo '<span class="status-pill ' . fleet_h($weeklyItem['status']) . '">' . fleet_h($weeklyItem['status']) . '</span>';
-        echo '<span class="helper-text">' . number_format((int) $weeklyItem['total_trip_legs']) . ' legs · K ' . number_format((float) $weeklyItem['total_fuel_amount'], 2) . '</span>';
+        echo '<span class="helper-text">' . fleet_h($stageLabel) . '</span>';
         echo '</div>';
         echo '</a>';
     }
@@ -259,14 +382,13 @@ if (!$selectedWeekly) {
     echo '<div class="empty-state">';
     echo '<div class="empty-state-icon"><i class="fas fa-clipboard-check"></i></div>';
     echo '<h3>Select a reconciliation package</h3>';
-    echo '<p>Choose an item from the queue to inspect the movement legs, fuel purchases, and receipts in detail.</p>';
+    echo '<p>Choose an item from the queue to inspect the movement legs, fuel purchases, review trail, and supporting evidence.</p>';
     echo '</div>';
 } else {
-    $canReviewNow = in_array($selectedWeekly['status'], ['submitted', 'under_review'], true);
     echo '<section class="panel" style="margin-bottom:0;">';
     echo '<div class="panel-header-split">';
-    echo '<div><h2>' . fleet_h($selectedWeekly['driver_name']) . ' · ' . fleet_h($selectedWeekly['number_plate']) . '</h2><p>' . fleet_h($selectedWeekly['vehicle_name']) . ' · ' . fleet_h($selectedWeekly['facility_name'] ?? 'Province not set') . ' · ' . fleet_h(fleet_format_week_label($selectedWeekly['week_start_date'])) . '</p></div>';
-    echo '<span class="status-pill ' . fleet_h($selectedWeekly['status']) . '">' . fleet_h($selectedWeekly['status']) . '</span>';
+    echo '<div><h2>' . fleet_h($selectedWeekly['driver_name']) . ' · ' . fleet_h($selectedWeekly['number_plate']) . '</h2><p>' . fleet_h($selectedWeekly['vehicle_name']) . ' · ' . fleet_h($selectedWeekly['facility_name'] ?? 'Province not set') . ' · ' . fleet_h(fleet_format_week_label($selectedWeekly['week_start_date'])) . ' · Submission Round ' . fleet_h((string) max(1, (int) $selectedWeekly['submission_round'])) . '</p></div>';
+    echo '<span class="status-pill ' . fleet_h($selectedWeekly['status']) . '">' . fleet_h($selectedStage['stage_label'] ?? $selectedWeekly['status']) . '</span>';
     echo '</div>';
     echo '<div class="metric-grid">';
     echo '<div class="metric-card"><div class="metric-label">Movement Legs</div><div class="metric-value">' . number_format((int) $selectedWeekly['total_trip_legs']) . '</div><div class="metric-caption">' . fleet_format_km($selectedWeekly['total_km']) . '</div></div>';
@@ -277,17 +399,59 @@ if (!$selectedWeekly) {
     if (!empty($selectedWeekly['return_reason'])) {
         echo '<div class="alert alert-info" style="margin-top:18px;"><i class="fas fa-reply"></i><span>Return reason: ' . fleet_h($selectedWeekly['return_reason']) . '</span></div>';
     }
-    if (!empty($selectedWeekly['review_notes'])) {
-        echo '<p class="helper-text">Review notes: ' . fleet_h($selectedWeekly['review_notes']) . '</p>';
+    echo '</section>';
+
+    echo '<section class="panel" style="margin-bottom:0;">';
+    echo '<div class="panel-header"><div><h2>Review Trail</h2><p>Each stage is recorded separately for this submission round.</p></div></div>';
+    echo '<div class="metric-grid">';
+    foreach (fleet_review_role_sequence() as $roleCode) {
+        $roleReview = $selectedStage['latest_by_role'][$roleCode] ?? null;
+        $roleLabel = fleet_review_role_action_label($roleCode);
+        $caption = 'Waiting';
+        $value = 'Pending';
+        if ($roleReview) {
+            $value = fleet_review_action_display_label((string) $roleReview['review_action']);
+            $caption = trim((string) ($roleReview['reviewer_name_display'] ?? ''));
+            $reviewerEmail = trim((string) ($roleReview['reviewer_email_display'] ?? ''));
+            $reviewedAt = !empty($roleReview['reviewed_at']) ? date('d M Y H:i', strtotime((string) $roleReview['reviewed_at'])) : '';
+            if ($reviewerEmail !== '') {
+                $caption .= ' · ' . $reviewerEmail;
+            }
+            if ($reviewedAt !== '') {
+                $caption .= ' · ' . $reviewedAt;
+            }
+        } elseif (($selectedStage['next_role'] ?? null) !== $roleCode && in_array($selectedWeekly['status'], ['approved', 'returned'], true)) {
+            $value = 'Not Used';
+            $caption = 'No action recorded in this round.';
+        }
+
+        echo '<div class="metric-card">';
+        echo '<div class="metric-label">' . fleet_h($roleLabel) . '</div>';
+        echo '<div class="metric-value">' . fleet_h($value) . '</div>';
+        echo '<div class="metric-caption">' . fleet_h($caption) . '</div>';
+        if (!empty($roleReview['review_notes'])) {
+            echo '<p class="helper-text" style="margin-top:10px;">' . fleet_h($roleReview['review_notes']) . '</p>';
+        }
+        echo '</div>';
     }
-    echo '<form method="post" class="form-grid" style="margin-top:16px;">';
-    echo '<input type="hidden" name="weekly_liquidation_id" value="' . fleet_h($selectedWeekly['id']) . '">';
-    echo '<div class="form-group span-12"><label for="review_notes">Review Notes</label><textarea id="review_notes" name="review_notes" placeholder="Add notes for the driver or for audit history. Notes are required if you return the reconciliation package."></textarea></div>';
-    echo '<div class="form-group span-12"><div class="button-row">';
-    echo '<button class="button" type="submit" name="review_action" value="approve" ' . ($canReviewNow ? '' : 'disabled') . '><i class="fas fa-check"></i>Approve Reconciliation</button>';
-    echo '<button class="button-secondary" type="submit" name="review_action" value="return" ' . ($canReviewNow ? '' : 'disabled') . '><i class="fas fa-reply"></i>Return to Driver</button>';
-    echo '</div></div>';
-    echo '</form>';
+    echo '</div>';
+    echo '</section>';
+
+    echo '<section class="panel" style="margin-bottom:0;">';
+    echo '<div class="panel-header"><div><h2>Current Action</h2><p>' . fleet_h($selectedStage['stage_label'] ?? 'Review in progress') . '</p></div></div>';
+    if ($canReviewNow) {
+        echo '<form method="post" class="form-grid" style="margin-top:16px;">';
+        echo '<input type="hidden" name="weekly_liquidation_id" value="' . fleet_h($selectedWeekly['id']) . '">';
+        echo '<div class="form-group span-12"><label for="review_notes">Review Notes</label><textarea id="review_notes" name="review_notes" placeholder="Add notes for audit history or for the driver if you are returning the package."></textarea></div>';
+        echo '<div class="form-group span-12"><label style="display:inline-flex;align-items:flex-start;gap:10px;"><input type="checkbox" name="review_confirmed" value="1" style="margin-top:4px;"> <span>' . fleet_h($confirmationLabel) . '</span></label></div>';
+        echo '<div class="form-group span-12"><div class="button-row">';
+        echo '<button class="button" type="submit" name="review_action" value="' . fleet_h($progressActionValue) . '"><i class="fas fa-check"></i>' . fleet_h($progressButtonLabel) . '</button>';
+        echo '<button class="button-secondary" type="submit" name="review_action" value="return"><i class="fas fa-reply"></i>Return to Driver</button>';
+        echo '</div></div>';
+        echo '</form>';
+    } else {
+        echo '<p class="helper-text">This package is not waiting for your review stage right now. The audit trail above shows how far it has moved.</p>';
+    }
     echo '</section>';
 
     echo '<section class="panel" style="margin-bottom:0;">';
@@ -362,5 +526,69 @@ if (!$selectedWeekly) {
 echo '</div>';
 echo '</div>';
 echo '</section>';
+$pageContent = ob_get_clean();
 
-fleet_render_shell_end();
+if ($isFinanceReviewer && ($useFinanceDashboardShell ?? false)) {
+    $dashboardCssVersion = @filemtime($appRoot . '/assets/css/dashboard.css') ?: time();
+    $fleetCssVersion = @filemtime($appRoot . '/assets/css/fleet_redesign.css') ?: time();
+
+    echo '<!DOCTYPE html>';
+    echo '<html lang="en">';
+    echo '<head>';
+    echo '<meta charset="UTF-8">';
+    echo '<meta name="viewport" content="width=device-width, initial-scale=1.0">';
+    echo '<title>' . fleet_h($pageTitle) . '</title>';
+    require $appRoot . '/favicon_links.php';
+    echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">';
+    echo '<link rel="stylesheet" type="text/css" href="assets/css/dashboard.css?v=' . urlencode((string) $dashboardCssVersion) . '">';
+    echo '<link rel="stylesheet" type="text/css" href="assets/css/fleet_redesign.css?v=' . urlencode((string) $fleetCssVersion) . '">';
+    echo '<style>
+        .finance-history-shell .page-subtitle { margin-top: 6px; color: var(--gray-600); font-size: 14px; }
+        .finance-history-shell .header-title-block { display: flex; flex-direction: column; gap: 4px; }
+        .finance-history-shell .panel:first-child { margin-top: 0; }
+        .finance-history-shell .panel,
+        .finance-history-shell .metric-card,
+        .finance-history-shell .data-item,
+        .finance-history-shell .queue-item { border-radius: 12px; }
+    </style>';
+    echo '</head>';
+    echo '<body>';
+    echo '<div class="container finance-history-shell">';
+    echo '<aside class="sidebar" id="sidebar">';
+    echo '<div class="sidebar-header">';
+    echo '<button class="hamburger" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>';
+    echo '<h2 class="sidebar-brand-finance"><span>Finance Hub</span></h2>';
+    echo '</div>';
+    echo '<ul class="menu">';
+    echo '<li><a href="dashboard.php"><span class="menu-icon"><i class="fas fa-home"></i></span><span class="menu-text">Dashboard</span></a></li>';
+    echo '<li><a href="finance_hub.php" class="active"><span class="menu-icon"><i class="fas fa-user-check"></i></span><span class="menu-text">Reconciliation History</span></a></li>';
+    echo '<li><a href="reports.php"><span class="menu-icon"><i class="fas fa-chart-line"></i></span><span class="menu-text">Reports</span></a></li>';
+    echo '</ul>';
+    echo '</aside>';
+    echo '<main class="main-content">';
+    echo '<div class="header">';
+    echo '<div class="header-title-block">';
+    echo '<h1>' . fleet_h($pageTitle) . '</h1>';
+    echo '<p class="page-subtitle">' . fleet_h($workflowSubtitle) . '</p>';
+    echo '</div>';
+    echo '<div class="user-header">';
+    echo '<div class="user-role-header">Finance</div>';
+    echo '<a href="logout.php" class="btn-logout"><i class="fas fa-sign-out-alt"></i> Logout</a>';
+    echo '</div>';
+    echo '</div>';
+    echo $pageContent;
+    echo '</main>';
+    echo '</div>';
+    echo '<script>function toggleSidebar(){document.getElementById("sidebar").classList.toggle("collapsed");}</script>';
+    echo '</body>';
+    echo '</html>';
+} else {
+    fleet_render_shell_start(
+        $pageTitle,
+        'province_liquidation',
+        $user,
+        $workflowSubtitle
+    );
+    echo $pageContent;
+    fleet_render_shell_end();
+}

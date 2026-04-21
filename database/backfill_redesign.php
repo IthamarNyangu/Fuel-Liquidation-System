@@ -21,6 +21,7 @@ try {
                 WHEN u.role = 'facility_admin' THEN 'facility_admin'
                 WHEN u.role = 'admin' THEN 'admin'
                 WHEN u.role = 'super_admin' THEN 'super_admin'
+                WHEN u.role = 'finance' THEN 'finance'
                 ELSE 'driver'
             END
         SET u.role_id = r.id

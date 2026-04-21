@@ -129,6 +129,18 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            line-height: 1.1;
+            white-space: nowrap;
+            min-width: 0;
+        }
+
+        .sidebar-header h2 span {
+            white-space: nowrap;
+        }
+
+        .sidebar-header h2.sidebar-brand-finance {
+            font-size: 18px;
+            gap: 0;
         }
 
         .sidebar.collapsed .sidebar-header h2 span {

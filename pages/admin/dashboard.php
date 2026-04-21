@@ -8,7 +8,7 @@ require_once $appRoot . '/auth_check.php';
 require_once $appRoot . '/facility_auth.php';
 
 // Get facility information
-$is_super_admin = isFleetManager();
+$is_super_admin = isFleetManager() || isFinance();
 $user_facility_id = getUserProvinceId();
 
 // Get user role and info from session
@@ -24,9 +24,11 @@ if ($user_role === 'driver') {
 $user_role_label = function_exists('getRoleDisplayName') ? getRoleDisplayName() : ucwords(str_replace('_', ' ', $user_role));
 if ($user_role === 'fleet_manager') {
     $user_role_label = 'Fleet Manager';
+} elseif ($user_role === 'finance') {
+    $user_role_label = 'Finance';
 }
 $can_approve = canApproveRequisitions();
-$can_review_weekly = isFleetManager() || isProvincialAdmin();
+$can_review_weekly = isFleetManager() || isProvincialAdmin() || isFinance();
 $can_access_vehicle_hub = in_array($user_role, ['driver', 'provincial_admin', 'fleet_manager'], true);
 $can_use_driver_workflow = $user_role === 'driver';
 $can_manage_accounts = canManageUsers();
@@ -35,6 +37,14 @@ $can_manage_provinces = canManageProvinces();
 $can_adjust_float = canAdjustFloat();
 $can_manage_fuel_prices = canManageFuelPrices();
 $vehicleHubLabel = $user_role === 'driver' ? 'My Vehicle' : 'My Fleet';
+$sidebarBrandTitle = match ($user_role) {
+    'finance' => 'Finance Hub',
+    'fleet_manager' => 'Fleet Hub',
+    'provincial_admin' => 'Province Hub',
+    default => 'Fuel System',
+};
+$dashboardHeading = 'Overview';
+$reviewHubLabel = $user_role === 'finance' ? 'Reconciliation History' : 'Reconciliation Review';
 
 // Check if non-fleet-manager user has a province assigned
 if (!$is_super_admin && !$user_facility_id) {
@@ -661,7 +671,7 @@ if ($is_super_admin) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fuel Liquidation Dashboard</title>
+    <title><?php echo htmlspecialchars($dashboardHeading); ?></title>
     <?php require $appRoot . '/favicon_links.php'; ?>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" type="text/css" href="assets/css/dashboard.css?v=<?php echo urlencode((string) @filemtime($appRoot . '/assets/css/dashboard.css')); ?>">
@@ -675,10 +685,18 @@ if ($is_super_admin) {
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <button class="hamburger" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
-                <h2><i class="fas fa-gas-pump"></i><span>Fuel System</span></h2>
+                <h2 class="<?php echo $user_role === 'finance' ? 'sidebar-brand-finance' : ''; ?>">
+                    <?php if ($user_role !== 'finance'): ?>
+                    <i class="fas fa-gas-pump"></i>
+                    <?php endif; ?>
+                    <span><?php echo htmlspecialchars($sidebarBrandTitle); ?></span>
+                </h2>
             </div>
             <ul class="menu">
                 <li><a href="dashboard.php" class="active"><span class="menu-icon"><i class="fas fa-home"></i></span><span class="menu-text">Dashboard</span></a></li>
+                <?php if ($can_review_weekly && $user_role === 'finance'): ?>
+                <li><a href="finance_hub.php"><span class="menu-icon"><i class="fas fa-user-check"></i></span><span class="menu-text"><?php echo htmlspecialchars($reviewHubLabel); ?></span></a></li>
+                <?php endif; ?>
                 <li><a href="reports.php"><span class="menu-icon"><i class="fas fa-chart-line"></i></span><span class="menu-text">Reports</span></a></li>
                 <?php if ($can_access_vehicle_hub): ?>
                 <li><a href="my_vehicle.php"><span class="menu-icon"><i class="fas fa-car-side"></i></span><span class="menu-text"><?php echo htmlspecialchars($vehicleHubLabel); ?></span></a></li>
@@ -687,8 +705,8 @@ if ($is_super_admin) {
                 <li><a href="weekly_report.php"><span class="menu-icon"><i class="fas fa-file-alt"></i></span><span class="menu-text">Weekly Report</span></a></li>
                 <li><a href="pending_reconciliations.php"><span class="menu-icon"><i class="fas fa-clipboard-check"></i></span><span class="menu-text">Pending Reconciliations</span></a></li>
                 <?php endif; ?>
-                <?php if ($can_review_weekly): ?>
-                <li><a href="province_liquidation.php"><span class="menu-icon"><i class="fas fa-user-check"></i></span><span class="menu-text">Reconciliation Review</span></a></li>
+                <?php if ($can_review_weekly && $user_role !== 'finance'): ?>
+                <li><a href="province_liquidation.php"><span class="menu-icon"><i class="fas fa-user-check"></i></span><span class="menu-text"><?php echo htmlspecialchars($reviewHubLabel); ?></span></a></li>
                 <?php endif; ?>
                 <?php if ($can_use_driver_workflow): ?>
                 <li><a href="logbook.php"><span class="menu-icon"><i class="fas fa-book"></i></span><span class="menu-text">Log Book</span></a></li>
@@ -716,7 +734,7 @@ if ($is_super_admin) {
         <main class="main-content">
             <div class="header">
                 <div class="header-title-block">
-                    <h1>Overview</h1>
+                    <h1><?php echo htmlspecialchars($dashboardHeading); ?></h1>
                 </div>
                 <div class="user-header">
                     <div class="user-role-header"><?php echo htmlspecialchars($user_role_label); ?></div>
